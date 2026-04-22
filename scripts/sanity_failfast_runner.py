@@ -1,0 +1,325 @@
+#!/usr/bin/env python
+"""
+Fail-fast sanity runner for stress/benchmark safety checks.
+
+Runs a short sequence:
+1) regression_safety_checks.py
+2) multi_client_stress.py
+3) orders_click_latency_benchmark.py
+
+Stops on first failure and writes a JSON report.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_REPORT_DIR = SCRIPT_DIR / "bench_results" / "sanity_runs"
+
+
+@dataclass
+class CheckResult:
+    name: str
+    ok: bool
+    duration_sec: float
+    exit_code: int | None
+    reason: str
+    json_payload: dict[str, Any] | None
+    stdout_tail: str
+    stderr_tail: str
+    command: list[str]
+
+
+def _extract_last_json_dict(text: str) -> dict[str, Any] | None:
+    if not text:
+        return None
+    decoder = json.JSONDecoder()
+    best_obj: dict[str, Any] | None = None
+    best_span = -1
+    for idx, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, end = decoder.raw_decode(text[idx:])
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            span = int(end)
+            if span >= best_span:
+                best_span = span
+                best_obj = obj
+    return best_obj
+
+
+def _tail(text: str, max_chars: int = 1600) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
+
+
+def _run_check(
+    *,
+    name: str,
+    command: list[str],
+    timeout_sec: float,
+    env: dict[str, str],
+    validate: Callable[[int, dict[str, Any] | None], tuple[bool, str]],
+) -> CheckResult:
+    started = time.perf_counter()
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(SCRIPT_DIR.parent.parent),
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            env=env,
+        )
+        duration = time.perf_counter() - started
+        payload = _extract_last_json_dict(proc.stdout) or _extract_last_json_dict(proc.stderr)
+        ok, reason = validate(proc.returncode, payload)
+        return CheckResult(
+            name=name,
+            ok=ok,
+            duration_sec=duration,
+            exit_code=proc.returncode,
+            reason=reason,
+            json_payload=payload,
+            stdout_tail=_tail(proc.stdout),
+            stderr_tail=_tail(proc.stderr),
+            command=command,
+        )
+    except subprocess.TimeoutExpired as exc:
+        duration = time.perf_counter() - started
+        out = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
+        err = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+        return CheckResult(
+            name=name,
+            ok=False,
+            duration_sec=duration,
+            exit_code=None,
+            reason=f"Timeout after {timeout_sec:.1f}s",
+            json_payload=None,
+            stdout_tail=_tail(out),
+            stderr_tail=_tail(err),
+            command=command,
+        )
+
+
+def _validate_regression(exit_code: int, payload: dict[str, Any] | None) -> tuple[bool, str]:
+    if exit_code != 0:
+        return False, f"Process exit code {exit_code}"
+    if not payload:
+        return False, "Missing JSON payload"
+    total = int(payload.get("total", 0) or 0)
+    failed = int(payload.get("failed", 0) or 0)
+    passed = int(payload.get("passed", 0) or 0)
+    if total <= 0:
+        return False, "Regression payload has zero checks"
+    if failed != 0 or passed != total:
+        return False, f"Regression mismatch: passed={passed}, failed={failed}, total={total}"
+    return True, f"Passed {passed}/{total}"
+
+
+def _validate_stress(expected_ops: int) -> Callable[[int, dict[str, Any] | None], tuple[bool, str]]:
+    def _inner(exit_code: int, payload: dict[str, Any] | None) -> tuple[bool, str]:
+        if exit_code != 0:
+            return False, f"Process exit code {exit_code}"
+        if not payload:
+            return False, "Missing JSON payload"
+
+        written_ok = int(payload.get("operations_written_ok", 0) or 0)
+        writer_failed = int(payload.get("operations_writer_failed", 0) or 0)
+        seen = int(payload.get("operations_reader_seen_by_change", 0) or 0)
+        timed_out = int(payload.get("operations_reader_timed_out", 0) or 0)
+        writer_done = bool(payload.get("writer_reported_done", False))
+        writer_exit_code = payload.get("writer_exit_code")
+
+        if not writer_done:
+            return False, "Writer did not report completion"
+        if writer_exit_code not in (0, None):
+            return False, f"Writer exit code is {writer_exit_code}"
+        if writer_failed != 0:
+            return False, f"Writer failed operations: {writer_failed}"
+        if written_ok < expected_ops:
+            return False, f"Written operations below expected ({written_ok} < {expected_ops})"
+        if seen < expected_ops:
+            return False, f"Reader seen-by-change below expected ({seen} < {expected_ops})"
+        if timed_out != 0:
+            return False, f"Reader timed out events: {timed_out}"
+        return True, f"Stress OK: written={written_ok}, seen={seen}"
+
+    return _inner
+
+
+def _validate_click_benchmark(expected_clicks: int) -> Callable[[int, dict[str, Any] | None], tuple[bool, str]]:
+    def _inner(exit_code: int, payload: dict[str, Any] | None) -> tuple[bool, str]:
+        if exit_code != 0:
+            return False, f"Process exit code {exit_code}"
+        if not payload:
+            return False, "Missing JSON payload"
+        if payload.get("ok") is False:
+            return False, f"Benchmark returned error: {payload.get('error', 'unknown')}"
+
+        clicks = int(payload.get("clicks", 0) or 0)
+        ui_samples = int(payload.get("ui_change_samples", 0) or 0)
+        db_samples = int(payload.get("db_commit_samples", 0) or 0)
+        if clicks != expected_clicks:
+            return False, f"Unexpected clicks count in payload ({clicks} != {expected_clicks})"
+        if ui_samples < expected_clicks:
+            return False, f"UI samples below expected ({ui_samples} < {expected_clicks})"
+        if db_samples < expected_clicks:
+            return False, f"DB samples below expected ({db_samples} < {expected_clicks})"
+        return True, f"Benchmark OK: ui={ui_samples}, db={db_samples}"
+
+    return _inner
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Fail-fast sanity stress runner with JSON report")
+    parser.add_argument("--report-dir", default=str(DEFAULT_REPORT_DIR), help="Directory where JSON report is written")
+    parser.add_argument("--python", default=sys.executable, help="Python executable")
+    parser.add_argument("--stress-operations", type=int, default=20, help="Operations for multi_client_stress")
+    parser.add_argument("--stress-timeout-s", type=float, default=180.0, help="Timeout for stress script")
+    parser.add_argument("--benchmark-clicks", type=int, default=5, help="Clicks for orders latency benchmark")
+    parser.add_argument("--benchmark-timeout-s", type=float, default=120.0, help="Hard timeout for benchmark script")
+    parser.add_argument("--regression-timeout-s", type=float, default=120.0, help="Timeout for regression checks")
+    args = parser.parse_args()
+
+    report_dir = Path(args.report_dir).resolve()
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SCRIPT_DIR.parent.parent)
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    checks_plan = [
+        {
+            "name": "regression_safety_checks",
+            "command": [args.python, str(SCRIPT_DIR / "regression_safety_checks.py")],
+            "timeout": float(args.regression_timeout_s),
+            "validate": _validate_regression,
+        },
+        {
+            "name": "multi_client_stress",
+            "command": [
+                args.python,
+                str(SCRIPT_DIR / "multi_client_stress.py"),
+                "--operations",
+                str(max(1, int(args.stress_operations))),
+                "--writer-interval-ms",
+                "80",
+                "--reader-poll-ms",
+                "100",
+                "--sync-timeout-s",
+                "5",
+                "--max-runtime-s",
+                str(max(20.0, float(args.stress_timeout_s) - 20.0)),
+            ],
+            "timeout": float(args.stress_timeout_s),
+            "validate": _validate_stress(max(1, int(args.stress_operations))),
+        },
+        {
+            "name": "orders_click_latency_benchmark",
+            "command": [
+                args.python,
+                str(SCRIPT_DIR / "orders_click_latency_benchmark.py"),
+                "--clicks",
+                str(max(1, int(args.benchmark_clicks))),
+                "--max-runtime-s",
+                "60",
+                "--hard-timeout-s",
+                str(max(60.0, float(args.benchmark_timeout_s))),
+            ],
+            "timeout": max(70.0, float(args.benchmark_timeout_s) + 10.0),
+            "validate": _validate_click_benchmark(max(1, int(args.benchmark_clicks))),
+        },
+    ]
+
+    results: list[CheckResult] = []
+    failed = False
+    failure_reason = ""
+    started_at = datetime.now()
+    started_perf = time.perf_counter()
+
+    for item in checks_plan:
+        result = _run_check(
+            name=item["name"],
+            command=item["command"],
+            timeout_sec=item["timeout"],
+            env=env,
+            validate=item["validate"],
+        )
+        results.append(result)
+        if not result.ok:
+            failed = True
+            failure_reason = f"{result.name}: {result.reason}"
+            break
+
+    duration_total = time.perf_counter() - started_perf
+    finished_at = datetime.now()
+
+    report = {
+        "status": "failed" if failed else "passed",
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "duration_sec": round(duration_total, 3),
+        "failure_reason": failure_reason,
+        "checks_total": len(checks_plan),
+        "checks_executed": len(results),
+        "checks_passed": sum(1 for r in results if r.ok),
+        "checks_failed": sum(1 for r in results if not r.ok),
+        "checks": [
+            {
+                "name": r.name,
+                "ok": r.ok,
+                "duration_sec": round(r.duration_sec, 3),
+                "exit_code": r.exit_code,
+                "reason": r.reason,
+                "command": r.command,
+                "json_payload": r.json_payload,
+                "stdout_tail": r.stdout_tail,
+                "stderr_tail": r.stderr_tail,
+            }
+            for r in results
+        ],
+    }
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_path = report_dir / f"sanity_failfast_{stamp}.json"
+    latest_path = report_dir / "sanity_failfast_latest.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    latest_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print(
+        json.dumps(
+            {
+                "status": report["status"],
+                "failure_reason": report["failure_reason"],
+                "checks_executed": report["checks_executed"],
+                "checks_passed": report["checks_passed"],
+                "checks_failed": report["checks_failed"],
+                "report_path": str(report_path),
+                "latest_path": str(latest_path),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

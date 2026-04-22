@@ -1,0 +1,445 @@
+#!/usr/bin/env python
+"""
+Regression checks for SQLite safety, local replica hygiene and backup cleanup gating.
+
+Usage:
+  set PYTHONPATH=C:\Project
+  python C:\Project\rem_card\scripts\regression_safety_checks.py
+"""
+
+from __future__ import annotations
+
+import glob
+import json
+import os
+import shutil
+import sqlite3
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+
+def _make_temp_root() -> str:
+    return tempfile.mkdtemp(prefix="remcard_regression_checks_")
+
+
+def _prepare_import_environment(temp_root: str):
+    # Isolate LOCALAPPDATA so tests do not touch real user cache.
+    os.environ["LOCALAPPDATA"] = os.path.join(temp_root, "localappdata")
+    os.environ["REMCARD_LOCAL_FIRST_SYNC"] = "1"
+    os.environ["REMCARD_LOCAL_SYNC_INTERVAL_SEC"] = "999"
+    os.environ["REMCARD_LOCAL_OUTBOX_SYNC"] = "0"
+    os.environ["REMCARD_LOCAL_CACHE_RETENTION_DAYS"] = "3"
+    os.environ["REMCARD_LOCAL_CACHE_MAX_FILES"] = "200"
+
+
+def _check_lock_read_unavailable_not_stale(temp_root: str) -> tuple[bool, str]:
+    from rem_card.app.sqlite_shared import FileWriteLock, _LOCK_READ_UNAVAILABLE
+
+    lock_path = os.path.join(temp_root, "db.lock")
+    lock1 = FileWriteLock(lock_path, stale_timeout_sec=60.0)
+    if not lock1.acquire(owner_id="owner_1", source="check_1"):
+        return False, "owner_1 failed to acquire initial lock"
+
+    lock2 = FileWriteLock(lock_path, stale_timeout_sec=60.0)
+    lock2._try_read_payload = lambda: _LOCK_READ_UNAVAILABLE  # type: ignore[attr-defined]
+    acquired_2 = lock2.acquire(owner_id="owner_2", source="check_2")
+
+    try:
+        if acquired_2:
+            return False, "owner_2 should not acquire lock when lock payload is unreadable"
+        if not os.path.exists(lock_path):
+            return False, "lock file unexpectedly removed on unreadable payload"
+        return True, "ok"
+    finally:
+        lock2.release()
+        lock1.release()
+
+
+def _check_transaction_isolation(temp_root: str) -> tuple[bool, str]:
+    from rem_card.app.sqlite_shared import SQLiteWriteController, configure_connection
+
+    db_path = os.path.join(temp_root, "tx_isolation.db")
+    lock_path = os.path.join(temp_root, "tx_isolation.lock")
+
+    conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None, timeout=5.0)
+    configure_connection(conn, profile="network")
+    conn.execute("CREATE TABLE test_rows(id INTEGER PRIMARY KEY AUTOINCREMENT, who TEXT)")
+    controller = SQLiteWriteController(db_path=db_path, lock_path=lock_path, owner_id="regression_tx")
+
+    start_evt = threading.Event()
+    results: dict[str, str] = {}
+
+    def writer_a():
+        try:
+            with controller.transaction(conn, source="writer_a") as cursor:
+                cursor.execute("INSERT INTO test_rows(who) VALUES (?)", ("A1",))
+                start_evt.set()
+                time.sleep(0.45)
+                raise RuntimeError("writer_a_forced_rollback")
+        except Exception as exc:  # noqa: BLE001
+            results["writer_a"] = str(exc)
+
+    def writer_b():
+        start_evt.wait(timeout=2.0)
+        controller.execute(conn, "INSERT INTO test_rows(who) VALUES (?)", ("B1",), source="writer_b")
+        results["writer_b"] = "ok"
+
+    ta = threading.Thread(target=writer_a, daemon=True)
+    tb = threading.Thread(target=writer_b, daemon=True)
+    ta.start()
+    tb.start()
+    ta.join(timeout=5.0)
+    tb.join(timeout=5.0)
+
+    rows = [tuple(row) for row in conn.execute("SELECT who FROM test_rows ORDER BY id").fetchall()]
+    conn.close()
+
+    if rows != [("B1",)]:
+        return False, f"unexpected rows after concurrent writes: {rows}"
+    if results.get("writer_b") != "ok":
+        return False, "writer_b did not complete successfully"
+    if "writer_a_forced_rollback" not in results.get("writer_a", ""):
+        return False, "writer_a rollback path was not triggered"
+    return True, "ok"
+
+
+def _check_read_your_writes_inside_transaction(temp_root: str) -> tuple[bool, str]:
+    from rem_card.data.dao.db_manager import DatabaseManager
+
+    db_path = os.path.join(temp_root, "read_your_writes.db")
+    manager = DatabaseManager(db_path, db_path)
+    try:
+        manager.execute_remcard(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('tx_probe', 1)",
+            source="regression_init",
+        )
+        # Let local-read grace expire to make sure test hits local-first branch without fix.
+        time.sleep(2.1)
+
+        with manager.remcard_transaction(source="regression_tx"):
+            manager.execute_remcard(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('tx_probe', 2)",
+                source="regression_update_inside_tx",
+            )
+            row = manager.fetch_one_remcard("SELECT value FROM meta WHERE key='tx_probe'")
+            inside_value = int(row[0]) if row and row[0] is not None else None
+
+        if inside_value != 2:
+            return False, f"stale read inside transaction: expected 2, got {inside_value}"
+        return True, "ok"
+    finally:
+        manager.close()
+
+
+def _create_sqlite_file(path: str):
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS t(id INTEGER PRIMARY KEY, v TEXT)")
+        conn.execute("INSERT OR REPLACE INTO t(id, v) VALUES (1, 'ok')")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _check_local_replica_tmp_cleanup(temp_root: str) -> tuple[bool, str]:
+    from rem_card.app.local_replica_sync import LocalReplicaSync
+
+    central_path = os.path.join(temp_root, "central_replica_source.db")
+    local_path = os.path.join(temp_root, "local_replica_target.db")
+    _create_sqlite_file(central_path)
+
+    replica = LocalReplicaSync(
+        central_db_path=central_path,
+        local_db_path=local_path,
+        sync_interval_sec=60.0,
+    )
+    ok = replica.sync_once()
+    replica.stop()
+
+    leftovers = glob.glob(f"{local_path}.sync_tmp.*")
+    if leftovers:
+        return False, f"temporary replica files were not cleaned: {leftovers[:3]}"
+    if not ok:
+        return False, "sync_once returned False"
+    return True, "ok"
+
+
+def _check_backup_cleanup_gating(temp_root: str) -> tuple[bool, str]:
+    from rem_card.app.backup_and_cleanup import _can_cleanup_old_backups
+
+    db_path = os.path.join(temp_root, "cleanup_gate_primary.db")
+    backup_dir = os.path.join(temp_root, "cleanup_gate_backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    _create_sqlite_file(db_path)
+
+    # No backups -> cleanup must be blocked.
+    if _can_cleanup_old_backups(db_path, backup_dir):
+        return False, "cleanup gate passed unexpectedly without healthy backups"
+
+    healthy_backup = os.path.join(backup_dir, "healthy_backup.db")
+    shutil.copy2(db_path, healthy_backup)
+    if not _can_cleanup_old_backups(db_path, backup_dir):
+        return False, "cleanup gate failed despite healthy backup"
+
+    # Corrupt backup only -> cleanup must be blocked.
+    os.remove(healthy_backup)
+    corrupt_backup = os.path.join(backup_dir, "corrupt_backup.db")
+    with open(corrupt_backup, "wb") as fh:
+        fh.write(b"not_sqlite")
+    if _can_cleanup_old_backups(db_path, backup_dir):
+        return False, "cleanup gate passed unexpectedly with only corrupt backup"
+
+    return True, "ok"
+
+
+def _check_backup_count_limit_enforcement(temp_root: str) -> tuple[bool, str]:
+    from rem_card.app.backup_and_cleanup import BACKUP_MAX_COUNT, _enforce_backup_limits
+
+    backup_dir = os.path.join(temp_root, "count_limit_backups")
+    os.makedirs(backup_dir, exist_ok=True)
+
+    files_to_create = int(BACKUP_MAX_COUNT) + 9
+    now = time.time()
+    for idx in range(files_to_create):
+        path = os.path.join(backup_dir, f"backup_{idx:03d}.db")
+        with open(path, "wb") as fh:
+            fh.write(b"sqlite-mock")
+        # Чем меньше idx, тем старше файл.
+        file_age_sec = float(files_to_create - idx) * 10.0
+        ts = now - file_age_sec
+        os.utime(path, (ts, ts))
+
+    _enforce_backup_limits(backup_dir)
+
+    remaining = [
+        os.path.join(backup_dir, name)
+        for name in os.listdir(backup_dir)
+        if name.lower().endswith(".db")
+    ]
+    if len(remaining) > int(BACKUP_MAX_COUNT):
+        return False, f"backup count cap not enforced: {len(remaining)} > {BACKUP_MAX_COUNT}"
+
+    newest_name = f"backup_{files_to_create - 1:03d}.db"
+    if not os.path.exists(os.path.join(backup_dir, newest_name)):
+        return False, f"newest backup was removed unexpectedly: {newest_name}"
+
+    oldest_name = "backup_000.db"
+    if os.path.exists(os.path.join(backup_dir, oldest_name)):
+        return False, f"oldest backup was not removed: {oldest_name}"
+
+    return True, "ok"
+
+
+def _check_balance_admission_hour_visibility(temp_root: str) -> tuple[bool, str]:
+    from datetime import datetime
+
+    from rem_card.data.dao.db_manager import DatabaseManager
+    from rem_card.data.dao.fluids_dao import FluidsDAO
+    from rem_card.data.dao.patient_dao import PatientDAO
+    from rem_card.services.fluid_service import FluidService
+    from rem_card.services.vital_service import VitalService
+
+    db_path = os.path.join(temp_root, "balance_admission_hour.db")
+    manager = DatabaseManager(db_path, db_path)
+    try:
+        admission_dt = datetime(2026, 4, 23, 11, 1, 41, 123456)
+        with manager.remcard_transaction(source="regression_seed_balance_hour") as cursor:
+            cursor.execute(
+                """
+                INSERT INTO patients (full_name, last_name, first_name, middle_name)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("Иванов Иван", "Иванов", "Иван", None),
+            )
+            patient_id = int(cursor.lastrowid)
+            cursor.execute(
+                """
+                INSERT INTO admissions (
+                    patient_id,
+                    bed_number,
+                    history_number,
+                    admission_datetime,
+                    is_active
+                )
+                VALUES (?, ?, ?, ?, 1)
+                """,
+                (patient_id, 1, "REG-FLUID-001", admission_dt.isoformat()),
+            )
+            admission_id = int(cursor.lastrowid)
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO beds (bed_number, status, current_admission_id)
+                VALUES (?, 'OCCUPIED', ?)
+                """,
+                (1, admission_id),
+            )
+
+        patient_dao = PatientDAO(manager)
+        fluids_dao = FluidsDAO(manager)
+        vital_service = VitalService(vitals_dao=None, patient_dao=patient_dao, status_service=None)
+        fluid_service = FluidService(fluids_dao, vital_service)
+
+        fluid_service.upsert_hourly_output(
+            admission_id=admission_id,
+            shift_date=admission_dt,
+            hour=admission_dt.hour,
+            row_key="urine",
+            value=250,
+            is_sum=False,
+        )
+
+        fluids = fluid_service.get_fluids(admission_id, admission_dt)
+        if len(fluids) != 1:
+            return False, f"expected exactly 1 visible fluid row, got {len(fluids)}"
+
+        fluid = fluids[0]
+        if int(fluid.urine or 0) != 250:
+            return False, f"unexpected urine value: {fluid.urine}"
+        if fluid.timestamp != admission_dt:
+            return False, f"admission-hour timestamp drifted: expected {admission_dt.isoformat()}, got {fluid.timestamp.isoformat()}"
+
+        return True, "ok"
+    finally:
+        manager.close()
+
+
+def _check_orders_force_refresh_accepts_unchanged_version(temp_root: str) -> tuple[bool, str]:
+    from datetime import datetime
+
+    from rem_card.services.read_coordinator import ReadCoordinator
+
+    class StaticOrdersService:
+        def __init__(self):
+            self.calls = 0
+
+        def build_orders_snapshot(self, admission_id, shift_date, *, only_committed=False, include_change_cursor=False):
+            self.calls += 1
+            snapshot = {
+                "admission_id": admission_id,
+                "shift_date": shift_date,
+                "only_committed": bool(only_committed),
+                "orders": [],
+                "admin_rows": [],
+                "patient_context": None,
+                "has_any_draft": False,
+                "has_any_administrations": False,
+                "has_any_orders": False,
+            }
+            if include_change_cursor:
+                snapshot["change_id"] = 42
+            return snapshot
+
+        def get_latest_change_id(self, admission_id=None, include_global=True):
+            return 42
+
+    service = StaticOrdersService()
+    coordinator = ReadCoordinator(service)
+    shift_date = datetime(2026, 4, 24, 12, 0, 0)
+    context = coordinator.make_orders_context(
+        source_db="live",
+        admission_id=1,
+        shift_date=shift_date,
+        role="doctor",
+        mode="live",
+        variant="full",
+    )
+
+    first = coordinator.load_orders_tab(context, source="user", priority="HIGH")
+    coordinator.invalidate_tab(context, reason="regression_force_refresh")
+    second = coordinator.load_orders_tab(context, source="refresh", priority="HIGH", force_refresh=True)
+
+    if int(first.get("version") or 0) != 42:
+        return False, f"unexpected first version: {first.get('version')}"
+    if int(second.get("version") or 0) != 42:
+        return False, f"unexpected second version: {second.get('version')}"
+    if service.calls < 2:
+        return False, f"force refresh did not rebuild snapshot, calls={service.calls}"
+    return True, "ok"
+
+
+def _check_doctor_orders_late_model_binding(temp_root: str) -> tuple[bool, str]:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    from datetime import datetime, timedelta
+
+    from PySide6.QtCore import QObject, Signal
+    from PySide6.QtWidgets import QApplication
+
+    from rem_card.ui.doctor_view.orders_widget import OrdersWidget
+
+    class DummyOrdersService(QObject):
+        patient_context_changed = Signal(int)
+
+        def get_day_period(self, shift_date):
+            start = shift_date.replace(hour=8, minute=0, second=0, microsecond=0)
+            return start, start + timedelta(hours=24)
+
+    app = QApplication.instance() or QApplication([])
+    service = DummyOrdersService()
+    widget = OrdersWidget(service=service, admission_id=1, shift_date=datetime(2026, 4, 24, 12), defer_ui=True)
+    try:
+        widget._ensure_model_initialized()
+        if widget.model is None:
+            return False, "model was not initialized before UI setup"
+        widget.model.orders = [object()]
+
+        widget.setup_ui()
+        widget.show()
+        app.processEvents()
+
+        if widget.table_view.model() is not widget.model:
+            return False, "late-created table did not bind existing orders model"
+        if widget.table_view.verticalHeader().count() != 1:
+            return False, f"table header row count mismatch: {widget.table_view.verticalHeader().count()}"
+        if widget.table_view.rowHeight(0) <= 0:
+            return False, f"first row is collapsed: height={widget.table_view.rowHeight(0)}"
+        return True, "ok"
+    finally:
+        widget.close()
+
+
+def main():
+    temp_root = _make_temp_root()
+    _prepare_import_environment(temp_root)
+
+    checks = [
+        ("lock_read_unavailable_not_stale", _check_lock_read_unavailable_not_stale),
+        ("transaction_isolation", _check_transaction_isolation),
+        ("read_your_writes_inside_tx", _check_read_your_writes_inside_transaction),
+        ("local_replica_tmp_cleanup", _check_local_replica_tmp_cleanup),
+        ("backup_cleanup_gating", _check_backup_cleanup_gating),
+        ("backup_count_limit_enforcement", _check_backup_count_limit_enforcement),
+        ("balance_admission_hour_visibility", _check_balance_admission_hour_visibility),
+        ("orders_force_refresh_accepts_unchanged_version", _check_orders_force_refresh_accepts_unchanged_version),
+        ("doctor_orders_late_model_binding", _check_doctor_orders_late_model_binding),
+    ]
+
+    result_items = []
+    failures = 0
+    started = time.time()
+    try:
+        for name, fn in checks:
+            check_root = os.path.join(temp_root, name)
+            Path(check_root).mkdir(parents=True, exist_ok=True)
+            ok, details = fn(check_root)
+            result_items.append({"check": name, "ok": bool(ok), "details": str(details)})
+            if not ok:
+                failures += 1
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+    report = {
+        "total": len(checks),
+        "failed": failures,
+        "passed": len(checks) - failures,
+        "duration_sec": round(time.time() - started, 3),
+        "checks": result_items,
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    raise SystemExit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()

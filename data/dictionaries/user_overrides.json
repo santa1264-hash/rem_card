@@ -1,0 +1,2367 @@
+{
+  "templates": {
+    "stroke_ischemic": {
+      "name": "ОНМК Ишемический",
+      "template_type": "simple",
+      "drugs": [
+        {
+          "drug": "citicolin",
+          "dose": 1000.0,
+          "unit": "mg",
+          "freq": 2,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 250
+          }
+        },
+        {
+          "drug": "thioctacid",
+          "form_key": "solution_iv",
+          "dose": 300.0,
+          "unit": "mg",
+          "admin_type": "infusion",
+          "duration_min": 30,
+          "freq": 1,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 250
+          }
+        },
+        {
+          "drug": "Citoflavin",
+          "dose": 10.0,
+          "unit": "ml",
+          "freq": 1,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 250
+          }
+        },
+        {
+          "drug": "Cholinialfoscerat",
+          "dose": 1000.0,
+          "unit": "mg",
+          "freq": 1,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 250
+          }
+        },
+        {
+          "drug": "omeprazole",
+          "dose": 20.0,
+          "freq": 1,
+          "unit": "mg",
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 10
+          }
+        },
+        {
+          "drug": "furosemide",
+          "dose": 20.0,
+          "unit": "mg",
+          "freq": 1,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 10
+          }
+        },
+        {
+          "drug": "acetylsalicylic",
+          "dose": 100.0,
+          "unit": "mg",
+          "freq": 1
+        }
+      ]
+    },
+    "sepsis_severe": {
+      "_deleted": true
+    },
+    "ONMK_gemor": {
+      "_deleted": true
+    },
+    "heart attack": {
+      "name": "ОКС с подъемом ST",
+      "template_type": "simple",
+      "drugs": [
+        {
+          "drug": "heparin",
+          "form_key": "",
+          "dose": 5000.0,
+          "unit": "IU",
+          "admin_type": "bolus",
+          "duration_min": 0,
+          "freq": 1,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 10
+          }
+        },
+        {
+          "drug": "fortelezin",
+          "form_key": "solution_iv",
+          "dose": 15.0,
+          "unit": "mg",
+          "admin_type": "bolus",
+          "duration_min": 0,
+          "freq": 1,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 10
+          }
+        },
+        {
+          "drug": "acetylsalicylic",
+          "form_key": "tablet",
+          "dose": 300.0,
+          "unit": "mg",
+          "admin_type": "per_os",
+          "duration_min": 0,
+          "freq": 1
+        },
+        {
+          "drug": "klopidogrel",
+          "form_key": "tablet",
+          "dose": 600.0,
+          "unit": "mg",
+          "admin_type": "per_os",
+          "duration_min": 0,
+          "freq": 1
+        },
+        {
+          "drug": "morphine",
+          "form_key": "solution_iv",
+          "dose": 10.0,
+          "unit": "mg",
+          "admin_type": "bolus",
+          "duration_min": 0,
+          "freq": 1,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 20
+          }
+        },
+        {
+          "drug": "omeprazole",
+          "form_key": "",
+          "dose": 20.0,
+          "unit": "mg",
+          "admin_type": "infusion",
+          "duration_min": 0,
+          "freq": 1
+        },
+        {
+          "drug": "nitroglycerin",
+          "form_key": "solution_iv",
+          "dose": 10.0,
+          "unit": "mg",
+          "admin_type": "dozator",
+          "duration_min": 0,
+          "freq": 1,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 250
+          }
+        }
+      ]
+    },
+    "Post-operative": {
+      "_deleted": true
+    },
+    "K92.2": {
+      "name": "ЖКК",
+      "template_type": "simple",
+      "drugs": [
+        {
+          "drug": "Tranexam",
+          "form_key": "solution_iv",
+          "dose": 1000.0,
+          "unit": "mg",
+          "admin_type": "infusion",
+          "duration_min": 30,
+          "freq": 1,
+          "diluent": {
+            "base": "nacl_09",
+            "volume": 250
+          }
+        }
+      ]
+    }
+  },
+  "diluents": {
+    "sterofundin": {
+      "_deleted": true
+    },
+    "bezrastvora": {
+      "latin": "No_rastvor",
+      "display": "Без растворителя",
+      "short": "",
+      "adds_volume": false,
+      "default_volumes": [
+        0
+      ]
+    },
+    "nacl_09": {
+      "latin": "Natrii chloridi 0.9%",
+      "display": "NaCl 0.9%",
+      "short": "S.",
+      "adds_volume": true,
+      "default_volumes": [
+        10,
+        15,
+        20,
+        50,
+        100,
+        200,
+        250,
+        500
+      ]
+    },
+    "glucose_5": {
+      "latin": "Glucosae 5%",
+      "display": "Glucose 5%",
+      "short": "S.",
+      "adds_volume": true,
+      "default_volumes": [
+        100,
+        200,
+        250,
+        400,
+        500
+      ]
+    },
+    "glucose_10": {
+      "latin": "Glucosae 10%",
+      "display": "Glucose 10%",
+      "short": "S.",
+      "adds_volume": true,
+      "default_volumes": [
+        100,
+        200,
+        250,
+        400,
+        500
+      ]
+    },
+    "ringer": {
+      "latin": "Solutionis Ringeri",
+      "display": "Ringeri",
+      "short": "S.",
+      "adds_volume": true,
+      "default_volumes": [
+        250,
+        400,
+        500
+      ]
+    }
+  },
+  "groups": {
+    "anticoagulants": {
+      "name_ru": "Антикоагулянты",
+      "priority_level": 2,
+      "offset_min": 30,
+      "color": "#8e44ad"
+    },
+    "antibiotics": {
+      "name_ru": "Антибиотики",
+      "priority_level": 1,
+      "offset_min": 10,
+      "color": "#2980b9"
+    },
+    "nsaid": {
+      "name_ru": "НПВС",
+      "priority_level": 3,
+      "offset_min": 60,
+      "color": "#f39c12"
+    },
+    "narcotic_analgesics": {
+      "name_ru": "Наркотические анальгетики",
+      "priority_level": 1,
+      "offset_min": 10,
+      "color": "#c0392b"
+    },
+    "sedatives": {
+      "name_ru": "Седативные и снотворные",
+      "priority_level": 3,
+      "offset_min": 50,
+      "color": "#34495e"
+    },
+    "Nootrops": {
+      "name_ru": "Ноотропы",
+      "priority_level": 3,
+      "offset_min": 90,
+      "color": "#7abe73"
+    },
+    "relaxants": {
+      "name_ru": "Миорелаксанты",
+      "priority_level": 1,
+      "offset_min": 0,
+      "color": "#1abc9c"
+    },
+    "antioxidants": {
+      "name_ru": "Антиоксиданты",
+      "priority_level": 3,
+      "offset_min": 120,
+      "color": "#c959fd"
+    },
+    "holinomimetiks": {
+      "name_ru": "Холиномиметики",
+      "priority_level": 2,
+      "offset_min": 30,
+      "color": "#10c0e3"
+    },
+    "comp_blood": {
+      "name_ru": "Компоненты крови",
+      "priority_level": 1,
+      "offset_min": 0,
+      "color": "#f54e4e"
+    },
+    "Gemostasis": {
+      "name_ru": "Гемостатики",
+      "priority_level": 1,
+      "offset_min": 15,
+      "color": "#426999"
+    },
+    "fibrinolitic": {
+      "name_ru": "Фибринолитики",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "antiaggregants": {
+      "name_ru": "Антиагреганты",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "fluids": {
+      "name_ru": "Инфузионные среды",
+      "priority_level": 3,
+      "offset_min": 60,
+      "color": "#95a5a6"
+    },
+    "gastroprotector": {
+      "_deleted": true
+    },
+    "antifung": {
+      "name_ru": "Противогрибковые",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "Antivirus": {
+      "name_ru": "Противовирусные",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "holinolitiks": {
+      "name_ru": "M-Холинолитики",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "Insulinius": {
+      "name_ru": "Инсулины",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "microelements": {
+      "name_ru": "Микроэлементы",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "antirvota": {
+      "name_ru": "Противорвотные",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "b-adrmimet": {
+      "name_ru": "B-Адреномиметики",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "Vitamins": {
+      "name_ru": "Витамины",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "nitrats": {
+      "name_ru": "Нитраты",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "ing_apf": {
+      "name_ru": "Ингибиторы АПФ",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "b-adrblok": {
+      "name_ru": "B-Адреноблокаторы",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "ant_angioII": {
+      "name_ru": "Антагонисты ангиотензина II",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "gastroprot": {
+      "name_ru": "Гастропротекторы",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    }
+  },
+  "drugs": {
+    "vancomycin": {
+      "latin": "Vancomycini",
+      "aliases": [
+        "ванко",
+        "ванкомицин"
+      ],
+      "star_alias": "ван*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 1.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "g",
+      "form_unit": "g",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antibiotics"
+    },
+    "cefazolin": {
+      "latin": "Cefazolini",
+      "aliases": [
+        "цефазолин"
+      ],
+      "star_alias": "цефазол*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 1.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "g",
+      "form_unit": "g",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antibiotics"
+    },
+    "dexamethasone": {
+      "latin": "Dexamethasoni",
+      "aliases": [
+        "декс",
+        "дексаметазон"
+      ],
+      "star_alias": "декс*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 4.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 4.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "glucocorticoids"
+    },
+    "prednisolone": {
+      "latin": "Prednisoloni",
+      "aliases": [
+        "преднизолон"
+      ],
+      "star_alias": "пред*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 30.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 30.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "glucocorticoids"
+    },
+    "metoclopramide": {
+      "latin": "Metoclopramidi",
+      "aliases": [
+        "метоклопрамид",
+        "церукал"
+      ],
+      "star_alias": "церук*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 10.0,
+      "forms": [
+        2.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 5.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "antirvota"
+    },
+    "kcl_amp": {
+      "latin": "KCl 4%",
+      "aliases": [
+        "калий",
+        "kcl",
+        "калия хлорид"
+      ],
+      "star_alias": "кали*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 10.0,
+      "forms": [
+        10.0
+      ],
+      "unit": "ml",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 40.0,
+      "default_dilution": {
+        "base": "glucose_5",
+        "volume": 200
+      },
+      "group": "microelements"
+    },
+    "acetylsalicylic": {
+      "latin": "Acidi acetylsalicylici",
+      "aliases": [
+        "аспирин",
+        "тромбоасс",
+        "ацетилсалициловая кислота",
+        "ацекардол"
+      ],
+      "star_alias": "аспир*, ацекар*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 100.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "antiaggregants"
+    },
+    "mgso4_amp": {
+      "latin": "MgSO4 25%",
+      "aliases": [
+        "магния сульфат",
+        "магнезия"
+      ],
+      "star_alias": "магн*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 10.0,
+      "forms": [
+        10.0
+      ],
+      "unit": "ml",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 250.0,
+      "default_dilution": {
+        "base": "glucose_5",
+        "volume": 200
+      },
+      "group": "microelements"
+    },
+    "atropine": {
+      "latin": "Atropini",
+      "aliases": [
+        "атропин"
+      ],
+      "star_alias": "атроп*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 1.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "holinolitiks"
+    },
+    "heparin": {
+      "latin": "Heparini",
+      "aliases": [
+        "гепарин"
+      ],
+      "star_alias": "гепар*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 5000.0,
+      "forms": [
+        5000.0
+      ],
+      "unit": "IU",
+      "form_unit": "IU",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0.0,
+      "default_dilution": null,
+      "group": "anticoagulants"
+    },
+    "norepinephrine": {
+      "latin": "Noradrenalini",
+      "aliases": [
+        "норадр",
+        "норадреналин",
+        "норик"
+      ],
+      "star_alias": "нор*",
+      "admin_type": "dozator",
+      "uses_line": true,
+      "duration_min": 360,
+      "default_dose": 16.0,
+      "forms": [
+        8.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 2.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "vasopressors"
+    },
+    "omeprazole": {
+      "latin": "Omeprazoli",
+      "aliases": [
+        "омепразол",
+        "омез"
+      ],
+      "star_alias": "омез*",
+      "admin_type": "infusion",
+      "uses_line": true,
+      "duration_min": 15,
+      "default_dose": 20.0,
+      "forms": [
+        40.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "gastroprot"
+    },
+    "linezolid": {
+      "latin": "Linezolidi",
+      "aliases": [
+        "линезолид"
+      ],
+      "star_alias": "лине*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 600.0,
+      "forms": [
+        300.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 2,
+      "default_dilution": null,
+      "group": "antibiotics"
+    },
+    "ketamine": {
+      "latin": "Ketamini",
+      "aliases": [
+        "кетамин"
+      ],
+      "star_alias": "кет*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 1,
+      "default_dose": 100.0,
+      "forms": [
+        2.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 50.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 20
+      },
+      "group": "sedatives"
+    },
+    "citicolin": {
+      "latin": "Citicolini",
+      "aliases": [
+        "цитик",
+        "цитиколин"
+      ],
+      "star_alias": "цитик*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 1000.0,
+      "forms": [
+        4.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 250,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "Nootrops"
+    },
+    "thioctacid": {
+      "latin": "Acidi thioctici",
+      "aliases": [
+        "тиокт",
+        "тиоктовая"
+      ],
+      "star_alias": "тиокт*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 600.0,
+      "forms": [
+        24.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 25,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antioxidants"
+    },
+    "Citoflavin": {
+      "latin": "Citoflavini",
+      "aliases": [
+        "цитофлавин",
+        "цитофл"
+      ],
+      "star_alias": "цитоф*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 10.0,
+      "forms": [
+        10.0
+      ],
+      "unit": "ml",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "Nootrops"
+    },
+    "Cholinialfoscerat": {
+      "latin": "Cholini alfosceratis",
+      "aliases": [
+        "холин",
+        "глеацер",
+        "церетон",
+        "церепро"
+      ],
+      "star_alias": "холин*, цереп*, церет*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 1000.0,
+      "forms": [
+        4.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 250,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "Nootrops"
+    },
+    "paracetamol_iv": {
+      "latin": "Paracetamoli",
+      "aliases": [
+        "парац",
+        "парацетамол"
+      ],
+      "star_alias": "парац*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 15,
+      "default_dose": 1000.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 10.0,
+      "default_dilution": null,
+      "group": "analgesics"
+    },
+    "ceftriaxone": {
+      "latin": "Ceftriaxoni",
+      "aliases": [
+        "цеф",
+        "цефтриаксон"
+      ],
+      "star_alias": "цеф*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 1.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "g",
+      "form_unit": "g",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antibiotics"
+    },
+    "Prozerin": {
+      "latin": "Prozerini",
+      "aliases": [
+        "прозерин",
+        "неостигмин",
+        "покакать"
+      ],
+      "star_alias": "проз*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 0.5,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0.5,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "holinomimetiks"
+    },
+    "insulin": {
+      "latin": "Insulini",
+      "aliases": [
+        "инсулин"
+      ],
+      "star_alias": "инс*",
+      "admin_type": "dozator",
+      "uses_line": true,
+      "duration_min": 360,
+      "default_dose": 20.0,
+      "forms": [
+        1000.0
+      ],
+      "unit": "IU",
+      "form_unit": "IU",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 20
+      },
+      "group": "Insulinius"
+    },
+    "Ruchnoivvod": {
+      "latin": "Ruki",
+      "aliases": [
+        "ручной",
+        "руки",
+        "нет",
+        "сам"
+      ],
+      "star_alias": "руч*",
+      "admin_type": "per_rectum",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 0.0,
+      "forms": [],
+      "unit": "mg",
+      "form_key": null,
+      "default_dilution": null
+    },
+    "cisatracurium": {
+      "_deleted": true
+    },
+    "cefuroxime": {
+      "_deleted": true
+    },
+    "imipenem": {
+      "_deleted": true
+    },
+    "piperacillin": {
+      "_deleted": true
+    },
+    "voriconazole": {
+      "_deleted": true
+    },
+    "etomidate": {
+      "_deleted": true
+    },
+    "amlodipine": {
+      "latin": "Amlodipini",
+      "aliases": [
+        "амлодипин"
+      ],
+      "star_alias": "амло*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 5.0,
+      "forms": [
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "antihypertensives"
+    },
+    "albumin": {
+      "latin": "Albumini",
+      "aliases": [
+        "альбумин",
+        "белок"
+      ],
+      "star_alias": "альб*, бел*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 20.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "g",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 200.0,
+      "default_dilution": null,
+      "group": "comp_blood"
+    },
+    "blood": {
+      "latin": "Эр. масса",
+      "aliases": [
+        "кровь",
+        "кро",
+        "кровушка",
+        "красня",
+        "эритро",
+        "эр",
+        "масса"
+      ],
+      "star_alias": "кров*, эр*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 0.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "ml",
+      "form_key": "comp_blood",
+      "default_dilution": null,
+      "group": "comp_blood"
+    },
+    "plasma": {
+      "latin": "СЗП",
+      "aliases": [
+        "плаз",
+        "плазма",
+        "желтая",
+        "сзп"
+      ],
+      "star_alias": "пла*, сзп",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 0.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "ml",
+      "form_key": "comp_blood",
+      "default_dilution": null,
+      "group": "comp_blood"
+    },
+    "metronidazole": {
+      "latin": "Metronidazoli",
+      "aliases": [
+        "метронидазол",
+        "метрогил"
+      ],
+      "star_alias": "метр*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 500.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 5,
+      "default_dilution": null,
+      "group": "antibiotics"
+    },
+    "fizrastvor": {
+      "latin": "NaCl 0.9%",
+      "aliases": [
+        "физ",
+        "раствор",
+        "соль",
+        "жижа"
+      ],
+      "star_alias": "фи*, раст*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 250.0,
+      "forms": [
+        250.0,
+        500.0
+      ],
+      "unit": "ml",
+      "form_key": "solution_iv",
+      "default_dilution": null,
+      "group": "fluids"
+    },
+    "glucozka5": {
+      "latin": "Glucosae 5%",
+      "aliases": [
+        "глюко",
+        "сахар"
+      ],
+      "star_alias": "глю*, сах*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 200.0,
+      "forms": [
+        200.0,
+        250.0,
+        400.0,
+        500.0
+      ],
+      "unit": "ml",
+      "form_key": "solution_iv",
+      "default_dilution": null,
+      "group": "fluids"
+    },
+    "glucozka10": {
+      "latin": "Glucosae 10%",
+      "aliases": [
+        "глюк",
+        "саха"
+      ],
+      "star_alias": "глю*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 250.0,
+      "forms": [
+        200.0,
+        250.0
+      ],
+      "unit": "ml",
+      "form_key": "solution_iv",
+      "default_dilution": null,
+      "group": "fluids"
+    },
+    "Tranexam": {
+      "latin": "Acidi tranexamici",
+      "aliases": [
+        "транексам"
+      ],
+      "star_alias": "тра*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 1000.0,
+      "forms": [
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 50,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "Gemostasis"
+    },
+    "Ringersol": {
+      "_deleted": true
+    },
+    "polarka": {
+      "is_multicomp": true,
+      "latin": "Полярка 250",
+      "aliases": [
+        "полярка"
+      ],
+      "star_alias": "пол*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 120,
+      "form_key": "solution_iv",
+      "default_dilution": {
+        "base": "glucose_5",
+        "volume": 250
+      },
+      "components": [
+        {
+          "drug_key": "kcl_amp",
+          "default_dose": 20.0
+        },
+        {
+          "drug_key": "mgso4_amp",
+          "default_dose": 10.0
+        },
+        {
+          "drug_key": "insulin",
+          "default_dose": 4.0
+        }
+      ],
+      "unit": "ml",
+      "form_unit": "ml",
+      "forms": [],
+      "group": "fluids"
+    },
+    "verapamil": {
+      "_deleted": true
+    },
+    "metamizole": {
+      "latin": "Metamizoli natrii",
+      "aliases": [
+        "метамизол",
+        "анальгин"
+      ],
+      "star_alias": "аналь*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 500.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 500.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "analgesics"
+    },
+    "amoxiclav": {
+      "_deleted": true
+    },
+    "amoxiclavi": {
+      "latin": "Amoksiklavi",
+      "aliases": [
+        "Амокси",
+        "Аугментин",
+        "Флемоклав"
+      ],
+      "star_alias": "амокс*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 1.2,
+      "forms": [
+        1.2
+      ],
+      "unit": "g",
+      "form_unit": "g",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antibiotics"
+    },
+    "fortelezin": {
+      "latin": "Fortelezini",
+      "aliases": [
+        "форт",
+        "Форт"
+      ],
+      "star_alias": "фор*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 15.0,
+      "forms": [
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 1.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "fibrinolitic"
+    },
+    "klopidogrel": {
+      "latin": "Klopidogreli",
+      "aliases": [
+        "кло",
+        "плав"
+      ],
+      "star_alias": "кло*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 600.0,
+      "forms": [
+        75.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "antiaggregants"
+    },
+    "post-operative": {
+      "_deleted": true
+    },
+    "furosemide": {
+      "latin": "Furosemidi",
+      "aliases": [
+        "фур",
+        "фуросемид",
+        "лазикс"
+      ],
+      "star_alias": "фур*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 5,
+      "default_dose": 20.0,
+      "forms": [
+        2.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 10,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "diuretics"
+    },
+    "meropenem": {
+      "latin": "Meropenemi",
+      "aliases": [
+        "меро",
+        "меропенем"
+      ],
+      "star_alias": "меро*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 180,
+      "default_dose": 1.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "g",
+      "form_unit": "g",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antibiotics"
+    },
+    "cefotaxime": {
+      "latin": "Cefotaximi",
+      "aliases": [
+        "цефотаксим"
+      ],
+      "star_alias": "цефот*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 1.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "g",
+      "form_unit": "g",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antibiotics"
+    },
+    "cefepime": {
+      "latin": "Cefepimi",
+      "aliases": [
+        "цефепим"
+      ],
+      "star_alias": "цефеп*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 1.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "g",
+      "form_unit": "g",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antibiotics"
+    },
+    "ceftazidime": {
+      "latin": "Ceftazidimi",
+      "aliases": [
+        "цефтазидим"
+      ],
+      "star_alias": "цефта*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 1.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "g",
+      "form_unit": "g",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antibiotics"
+    },
+    "ampicillin": {
+      "_deleted": true
+    },
+    "azithromycin": {
+      "latin": "Azithromycini",
+      "aliases": [
+        "азитромицин"
+      ],
+      "star_alias": "азитр*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 500.0,
+      "forms": [
+        500.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "antibiotics"
+    },
+    "clarithromycin": {
+      "latin": "Clarithromycini",
+      "aliases": [
+        "кларитромицин"
+      ],
+      "star_alias": "клар*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 500.0,
+      "forms": [
+        500.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "antibiotics"
+    },
+    "erythromycin": {
+      "latin": "Erythromycini",
+      "aliases": [
+        "эритромицин"
+      ],
+      "star_alias": "эритр*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 100.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "antibiotics"
+    },
+    "levofloxacin": {
+      "latin": "Levofloxacini",
+      "aliases": [
+        "левофлоксацин"
+      ],
+      "star_alias": "лево*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 500.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 5,
+      "default_dilution": null,
+      "group": "antibiotics"
+    },
+    "ciprofloxacin": {
+      "latin": "Ciprofloxacini",
+      "aliases": [
+        "ципрофлоксацин"
+      ],
+      "star_alias": "ципро*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 200.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 2,
+      "default_dilution": null,
+      "group": "antibiotics"
+    },
+    "moxifloxacin": {
+      "latin": "Moxifloxacini",
+      "aliases": [
+        "моксифлоксацин"
+      ],
+      "star_alias": "мокси*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 400.0,
+      "forms": [
+        250.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 1.6,
+      "default_dilution": null,
+      "group": "antibiotics"
+    },
+    "fluconazole": {
+      "latin": "Fluconazoli",
+      "aliases": [
+        "флуконазол"
+      ],
+      "star_alias": "флук*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 200.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 2,
+      "default_dilution": null,
+      "group": "antifung"
+    },
+    "acyclovir": {
+      "latin": "Acicloviri",
+      "aliases": [
+        "ацикловир"
+      ],
+      "star_alias": "ацикл*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 60,
+      "default_dose": 250.0,
+      "forms": [
+        250.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "lyophilisate",
+      "concentration_mg_ml": 0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 100
+      },
+      "group": "Antivirus"
+    },
+    "fentanyl": {
+      "latin": "Fentanyli",
+      "aliases": [
+        "фент",
+        "фентанил"
+      ],
+      "star_alias": "фент*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 50.0,
+      "forms": [
+        2.0
+      ],
+      "unit": "mcg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0.05,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "narcotic_analgesics"
+    },
+    "morphine": {
+      "latin": "Morphini",
+      "aliases": [
+        "морфин"
+      ],
+      "star_alias": "морф*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 5,
+      "default_dose": 10.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 10.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "narcotic_analgesics"
+    },
+    "tramadol": {
+      "_deleted": true
+    },
+    "sufentanil": {
+      "_deleted": true
+    },
+    "ketorolac": {
+      "latin": "Ketorolaci",
+      "aliases": [
+        "кеторолак"
+      ],
+      "star_alias": "кетор*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 30.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 30.0,
+      "default_dilution": null,
+      "group": "nsaid"
+    },
+    "diclofenac": {
+      "_deleted": true
+    },
+    "propofol": {
+      "latin": "Propofoli",
+      "aliases": [
+        "пропофол",
+        "молоко"
+      ],
+      "star_alias": "проп*",
+      "admin_type": "bolus",
+      "uses_line": true,
+      "duration_min": 1,
+      "default_dose": 200.0,
+      "forms": [
+        20.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 10.0,
+      "default_dilution": null,
+      "group": "sedatives"
+    },
+    "thiopental": {
+      "_deleted": true
+    },
+    "diazepam": {
+      "latin": "Diazepami",
+      "aliases": [
+        "диазепам",
+        "реланиум",
+        "сибазон"
+      ],
+      "star_alias": "сиб*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 10.0,
+      "forms": [
+        2.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 5.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "sedatives"
+    },
+    "midazolam": {
+      "latin": "Midazolami",
+      "aliases": [
+        "мидазолам",
+        "дормикум"
+      ],
+      "star_alias": "мид*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 5.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 5.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "sedatives"
+    },
+    "lorazepam": {
+      "_deleted": true
+    },
+    "phenazepam": {
+      "_deleted": true
+    },
+    "rocuronium": {
+      "latin": "Rocuronii",
+      "aliases": [
+        "рокуроний"
+      ],
+      "star_alias": "рокур",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 50.0,
+      "forms": [
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 10.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "relaxants"
+    },
+    "atracurium": {
+      "_deleted": true
+    },
+    "succinylcholine": {
+      "_deleted": true
+    },
+    "adrenaline": {
+      "latin": "Adrenalini",
+      "aliases": [
+        "адреналин"
+      ],
+      "star_alias": "адр*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 1.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 1.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "vasopressors"
+    },
+    "dopamine": {
+      "latin": "Dopamini",
+      "aliases": [
+        "допамин",
+        "дофамин"
+      ],
+      "star_alias": "доф*",
+      "admin_type": "dozator",
+      "uses_line": true,
+      "duration_min": 360,
+      "default_dose": 200.0,
+      "forms": [
+        4.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 50.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "vasopressors"
+    },
+    "dobutamine": {
+      "_deleted": true
+    },
+    "phenylephrine": {
+      "_deleted": true
+    },
+    "nifedipine": {
+      "_deleted": true
+    },
+    "polar10": {
+      "is_multicomp": true,
+      "latin": "Полярка 500",
+      "aliases": [
+        "полярка 500"
+      ],
+      "star_alias": "полярк*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 120,
+      "form_key": "solution_iv",
+      "default_dilution": {
+        "base": "glucose_5",
+        "volume": 500
+      },
+      "components": [
+        {
+          "drug_key": "kcl_amp",
+          "default_dose": 20.0
+        },
+        {
+          "drug_key": "mgso4_amp",
+          "default_dose": 10.0
+        },
+        {
+          "drug_key": "insulin",
+          "default_dose": 6.0
+        }
+      ],
+      "unit": "ml",
+      "form_unit": "ml",
+      "forms": [],
+      "group": "fluids"
+    },
+    "rheopolyglucin": {
+      "_deleted": true
+    },
+    "procaine": {
+      "_deleted": true
+    },
+    "bupivacaine": {
+      "_deleted": true
+    },
+    "lidocaine": {
+      "_deleted": true
+    },
+    "ca_gluconate": {
+      "latin": "Calcii gluconatis",
+      "aliases": [
+        "кальция глюконат"
+      ],
+      "star_alias": "кальц*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 180,
+      "default_dose": 1000.0,
+      "forms": [
+        10.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 100.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 10
+      },
+      "group": "microelements"
+    },
+    "diltiazem": {
+      "_deleted": true
+    },
+    "isosorbide": {
+      "_deleted": true
+    },
+    "propranolol": {
+      "_deleted": true
+    },
+    "apixaban": {
+      "latin": "Apixabani",
+      "aliases": [
+        "апиксабан",
+        "эликвис"
+      ],
+      "star_alias": "апикс*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 5.0,
+      "forms": [
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "anticoagulants"
+    },
+    "rivaroxaban": {
+      "_deleted": true
+    },
+    "dabigatran": {
+      "_deleted": true
+    },
+    "torasemide": {
+      "_deleted": true
+    },
+    "spironolactone": {
+      "latin": "Spironolactoni",
+      "aliases": [
+        "спиронолактон",
+        "верошпирон"
+      ],
+      "star_alias": "спирон*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 50.0,
+      "forms": [
+        50.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "diuretics"
+    },
+    "methylprednisolone": {
+      "_deleted": true
+    },
+    "hydrocortisone": {
+      "_deleted": true
+    },
+    "pantoprazole": {
+      "_deleted": true
+    },
+    "esomeprazole": {
+      "_deleted": true
+    },
+    "ondansetron": {
+      "_deleted": true
+    },
+    "droperidol": {
+      "_deleted": true
+    },
+    "salbutamol": {
+      "latin": "Salbutamoli",
+      "aliases": [
+        "сальбутамол"
+      ],
+      "star_alias": "сальбут*",
+      "admin_type": "spray",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 1.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "mcg",
+      "form_unit": "mcg",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0.01,
+      "default_dilution": null,
+      "group": "b-adrmimet"
+    },
+    "ipratropium": {
+      "_deleted": true
+    },
+    "budesonide": {
+      "_deleted": true
+    },
+    "Berodual": {
+      "latin": "Beroduali",
+      "aliases": [
+        "беродуал",
+        "ипратерол"
+      ],
+      "star_alias": "берод*",
+      "admin_type": "spray",
+      "uses_line": false,
+      "duration_min": 5,
+      "default_dose": 1.0,
+      "forms": [
+        20.0
+      ],
+      "unit": "ml",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0.75,
+      "default_dilution": null,
+      "group": "b-adrmimet"
+    },
+    "ascorbic": {
+      "latin": "Acidi ascorbinici",
+      "aliases": [
+        "аскорбиновая кислота"
+      ],
+      "star_alias": "аскор*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 100.0,
+      "forms": [
+        2.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 50.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "Vitamins"
+    },
+    "nitroglycerin": {
+      "latin": "Nitroglycerini",
+      "aliases": [
+        "нитроглицерин"
+      ],
+      "star_alias": "нитра*",
+      "admin_type": "dozator",
+      "uses_line": true,
+      "duration_min": 360,
+      "default_dose": 10.0,
+      "forms": [
+        10.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 1.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 50
+      },
+      "group": "nitrats"
+    },
+    "metoprolol": {
+      "latin": "Metoprololi",
+      "aliases": [
+        "метопролол"
+      ],
+      "star_alias": "метопр*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 50.0,
+      "forms": [
+        50.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "b-adrblok"
+    },
+    "bisoprolol": {
+      "latin": "Bisoprololi",
+      "aliases": [
+        "бисопролол"
+      ],
+      "star_alias": "бисопр",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 5.0,
+      "forms": [
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "b-adrblok"
+    },
+    "carvedilol": {
+      "_deleted": true
+    },
+    "enalapril": {
+      "latin": "Enalaprili",
+      "aliases": [
+        "эналаприл",
+        "энап"
+      ],
+      "star_alias": "энап*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 5.0,
+      "forms": [
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "ing_apf"
+    },
+    "captopril": {
+      "latin": "Captoprili",
+      "aliases": [
+        "каптоприл",
+        "капотен"
+      ],
+      "star_alias": "капто*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 25.0,
+      "forms": [
+        50.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "antihypertensives"
+    },
+    "perindopril": {
+      "latin": "Perindoprili",
+      "aliases": [
+        "периндоприл",
+        "перинева"
+      ],
+      "star_alias": "перин*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 4.0,
+      "forms": [
+        4.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "ing_apf"
+    },
+    "losartan": {
+      "latin": "Losartani",
+      "aliases": [
+        "лозартан"
+      ],
+      "star_alias": "лозар*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 100.0,
+      "forms": [
+        100.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "ant_angioII"
+    },
+    "valsartan": {
+      "latin": "Valsartani",
+      "aliases": [
+        "валсартан",
+        "валсакор"
+      ],
+      "star_alias": "валс*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 160.0,
+      "forms": [
+        160.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "ant_angioII"
+    },
+    "warfarin": {
+      "latin": "Warfarini",
+      "aliases": [
+        "варфарин"
+      ],
+      "star_alias": "варф*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 5.0,
+      "forms": [
+        2.0,
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "anticoagulants"
+    },
+    "nadroparin": {
+      "latin": "Nadroparini calcii",
+      "aliases": [
+        "надропарин",
+        "фраксипарин"
+      ],
+      "star_alias": "надро*",
+      "admin_type": "sc",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 3800.0,
+      "forms": [
+        3800.0
+      ],
+      "unit": "IU",
+      "form_unit": "mg",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0.0,
+      "default_dilution": null,
+      "group": "anticoagulants"
+    },
+    "enoxaparin": {
+      "latin": "Enoxaparini natrii",
+      "aliases": [
+        "эноксапарин",
+        "клексан"
+      ],
+      "star_alias": "энокс*",
+      "admin_type": "sc",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 10000.0,
+      "forms": [
+        10000.0
+      ],
+      "unit": "IU",
+      "form_unit": "IU",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 0.0,
+      "default_dilution": null,
+      "group": "anticoagulants"
+    },
+    "promedol": {
+      "latin": "Promedoli",
+      "aliases": [
+        "промедол"
+      ],
+      "star_alias": "пром*",
+      "admin_type": "bolus",
+      "uses_line": false,
+      "duration_min": 5,
+      "default_dose": 20.0,
+      "forms": [
+        1.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 20.0,
+      "default_dilution": null,
+      "group": "narcotic_analgesics"
+    }
+  },
+  "admin_types": {
+    "fsf": {
+      "_deleted": true
+    },
+    "dozator": {
+      "name_ru": "В/в ч/з дозозатор"
+    },
+    "spray": {
+      "name_ru": "Ингаляционно"
+    }
+  },
+  "forms": {
+    "solution_im": {
+      "_deleted": true
+    },
+    "lyophilisate": {
+      "name_ru": "Порошок (лиофилизат)",
+      "latin_abbr": "Pulv.",
+      "can_dilute": true
+    },
+    "solution_iv": {
+      "name_ru": "Раствор",
+      "latin_abbr": "S.",
+      "can_dilute": true
+    },
+    "tablet": {
+      "name_ru": "Таблетки",
+      "latin_abbr": "T.",
+      "can_dilute": false
+    },
+    "capsule": {
+      "name_ru": "Капсулы",
+      "latin_abbr": "Caps.",
+      "can_dilute": false
+    },
+    "suppository": {
+      "name_ru": "Свечи",
+      "latin_abbr": "Supp.",
+      "can_dilute": false
+    },
+    "drops": {
+      "name_ru": "Капли",
+      "latin_abbr": "Gtt.",
+      "can_dilute": false
+    },
+    "ointment": {
+      "name_ru": "Мазь",
+      "latin_abbr": "Ung.",
+      "can_dilute": false
+    },
+    "comp_blood": {
+      "name_ru": "Компонент крови",
+      "latin_abbr": "",
+      "can_dilute": false
+    }
+  }
+}

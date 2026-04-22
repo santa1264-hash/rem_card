@@ -1,0 +1,34 @@
+import sqlite3
+
+from rem_card.app.paths import DB_LOCK_PATH, JOURNAL_DB_PATH, ensure_directories
+from rem_card.app.sqlite_shared import SQLiteWriteController, configure_connection, run_integrity_check
+from rem_card.app.unified_db_schema import ensure_unified_schema
+
+
+def update_db():
+    ensure_directories()
+
+    print(f"[DB PATH] unified_runtime.db -> {JOURNAL_DB_PATH}")
+
+    conn = sqlite3.connect(JOURNAL_DB_PATH, check_same_thread=False, isolation_level=None, timeout=5.0)
+    try:
+        configure_connection(conn)
+        ok, result = run_integrity_check(conn)
+        if not ok:
+            raise RuntimeError(f"Integrity check failed: {result}")
+
+        controller = SQLiteWriteController(
+            db_path=JOURNAL_DB_PATH,
+            lock_path=DB_LOCK_PATH,
+            owner_id="update_db_script",
+        )
+        with controller.transaction(conn, source="update_db_script"):
+            ensure_unified_schema(conn)
+
+        print("Unified schema migration successful")
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    update_db()

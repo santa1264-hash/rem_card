@@ -1,0 +1,208 @@
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QStackedWidget, QVBoxLayout, QWidget
+
+
+class AdminMainWidget(QWidget):
+    """
+    Админ-панель с ленивой загрузкой страниц.
+    Создаем только меню сразу, а тяжелые словари и печать — по запросу.
+    """
+
+    def __init__(self, service=None, role="admin", parent=None):
+        super().__init__(parent)
+        self.service = service
+        self.role = role
+        self._pending_print_context = None
+
+        self.drugs_widget = None
+        self.groups_widget = None
+        self.diluents_widget = None
+        self.forms_widget = None
+        self.templates_widget = None
+        self.diet_templates_widget = None
+        self.admin_types_widget = None
+        self.print_widget = None
+
+        self.setup_ui()
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.stack = QStackedWidget()
+        main_layout.addWidget(self.stack)
+
+        self.menu_widget = QWidget()
+        menu_layout = QVBoxLayout(self.menu_widget)
+        menu_layout.setContentsMargins(40, 40, 40, 40)
+        menu_layout.setSpacing(20)
+
+        title = QLabel("Панель Администратора")
+        title.setProperty("heading", "true")
+        title.setAlignment(Qt.AlignCenter)
+        menu_layout.addWidget(title)
+
+        btn_layout = QVBoxLayout()
+        btn_layout.setSpacing(15)
+        btn_layout.setAlignment(Qt.AlignCenter)
+
+        self.btn_drugs = QPushButton("Справочник препаратов")
+        self.btn_groups = QPushButton("Группы препаратов")
+        self.btn_forms = QPushButton("Лекарственные формы")
+        self.btn_admin_types = QPushButton("Типы введения")
+        self.btn_diluents = QPushButton("Растворители (Базы)")
+        self.btn_templates = QPushButton("Клинические протоколы")
+        self.btn_diet_templates = QPushButton("Шаблоны питания")
+        self.btn_print = QPushButton("Печать / Отчеты")
+
+        menu_buttons = [
+            self.btn_drugs,
+            self.btn_groups,
+            self.btn_forms,
+            self.btn_admin_types,
+            self.btn_diluents,
+            self.btn_templates,
+        ]
+        if self.role != "nurse":
+            menu_buttons.append(self.btn_diet_templates)
+        menu_buttons.append(self.btn_print)
+
+        for btn in menu_buttons:
+            btn.setObjectName("DialogOkBtn")
+            btn.setFixedSize(350, 60)
+            btn_layout.addWidget(btn)
+
+        menu_layout.addLayout(btn_layout)
+        menu_layout.addStretch()
+
+        nav_layout = QHBoxLayout()
+        self.btn_back_to_roles = QPushButton("← Назад")
+        self.btn_back_to_roles.setObjectName("DialogOkBtn")
+        self.btn_back_to_roles.setFixedSize(250, 40)
+        nav_layout.addWidget(self.btn_back_to_roles)
+        nav_layout.addStretch()
+        menu_layout.addLayout(nav_layout)
+
+        self.stack.addWidget(self.menu_widget)
+        self.stack.setCurrentWidget(self.menu_widget)
+
+        self.btn_drugs.clicked.connect(self.open_drugs)
+        self.btn_groups.clicked.connect(self.open_groups)
+        self.btn_forms.clicked.connect(self.open_forms)
+        self.btn_admin_types.clicked.connect(self.open_admin_types)
+        self.btn_diluents.clicked.connect(self.open_diluents)
+        self.btn_templates.clicked.connect(self.open_templates)
+        self.btn_diet_templates.clicked.connect(self.open_diet_templates)
+        self.btn_print.clicked.connect(self.open_print)
+
+    def _show_page(self, widget):
+        if widget is not None:
+            self.stack.setCurrentWidget(widget)
+
+    def _connect_back(self, widget):
+        if hasattr(widget, "btn_back"):
+            widget.btn_back.clicked.connect(self.show_menu)
+        return widget
+
+    def _ensure_drugs_widget(self):
+        if self.drugs_widget is None:
+            from .drugs_dict_widget import DrugsDictWidget
+
+            self.drugs_widget = self._connect_back(DrugsDictWidget())
+            self.stack.addWidget(self.drugs_widget)
+        return self.drugs_widget
+
+    def _ensure_groups_widget(self):
+        if self.groups_widget is None:
+            from .groups_dict_widget import GroupsDictWidget
+
+            self.groups_widget = self._connect_back(GroupsDictWidget())
+            self.stack.addWidget(self.groups_widget)
+        return self.groups_widget
+
+    def _ensure_forms_widget(self):
+        if self.forms_widget is None:
+            from .forms_dict_widget import FormsDictWidget
+
+            self.forms_widget = self._connect_back(FormsDictWidget())
+            self.stack.addWidget(self.forms_widget)
+        return self.forms_widget
+
+    def _ensure_admin_types_widget(self):
+        if self.admin_types_widget is None:
+            from .admin_types_dict_widget import AdminTypesDictWidget
+
+            self.admin_types_widget = self._connect_back(AdminTypesDictWidget())
+            self.stack.addWidget(self.admin_types_widget)
+        return self.admin_types_widget
+
+    def _ensure_diluents_widget(self):
+        if self.diluents_widget is None:
+            from .diluents_dict_widget import DiluentsDictWidget
+
+            self.diluents_widget = self._connect_back(DiluentsDictWidget())
+            self.stack.addWidget(self.diluents_widget)
+        return self.diluents_widget
+
+    def _ensure_templates_widget(self):
+        if self.templates_widget is None:
+            from .templates_dict_widget import TemplatesDictWidget
+
+            self.templates_widget = self._connect_back(TemplatesDictWidget())
+            self.stack.addWidget(self.templates_widget)
+        return self.templates_widget
+
+    def _ensure_diet_templates_widget(self):
+        if self.diet_templates_widget is None:
+            from .diet_templates_widget import DietTemplatesWidget
+
+            self.diet_templates_widget = self._connect_back(DietTemplatesWidget(self.service, role=self.role))
+            self.stack.addWidget(self.diet_templates_widget)
+        elif hasattr(self.diet_templates_widget, "set_service"):
+            self.diet_templates_widget.set_service(self.service)
+        return self.diet_templates_widget
+
+    def _ensure_print_widget(self):
+        if self.print_widget is None:
+            from .print_settings_widget import PrintSettingsWidget
+
+            self.print_widget = self._connect_back(PrintSettingsWidget())
+            self.stack.addWidget(self.print_widget)
+            if self._pending_print_context is not None:
+                self.print_widget.set_context(*self._pending_print_context)
+        return self.print_widget
+
+    def open_drugs(self):
+        self._show_page(self._ensure_drugs_widget())
+
+    def open_groups(self):
+        self._show_page(self._ensure_groups_widget())
+
+    def open_forms(self):
+        self._show_page(self._ensure_forms_widget())
+
+    def open_admin_types(self):
+        self._show_page(self._ensure_admin_types_widget())
+
+    def open_diluents(self):
+        self._show_page(self._ensure_diluents_widget())
+
+    def open_templates(self):
+        self._show_page(self._ensure_templates_widget())
+
+    def open_diet_templates(self):
+        self._show_page(self._ensure_diet_templates_widget())
+
+    def open_print(self):
+        self._show_page(self._ensure_print_widget())
+
+    def set_print_context(self, service, admission_id, date):
+        self.service = service
+        self._pending_print_context = (service, admission_id, date)
+        if self.diet_templates_widget is not None:
+            self.diet_templates_widget.set_service(service)
+        if self.print_widget is not None:
+            self.print_widget.set_context(service, admission_id, date)
+
+    def show_menu(self):
+        self.stack.setCurrentWidget(self.menu_widget)

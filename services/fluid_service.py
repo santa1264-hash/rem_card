@@ -1,0 +1,123 @@
+from typing import List, Optional
+from datetime import datetime, timedelta
+from ..data.dto.remcard_dto import FluidDTO
+from ..data.dao.fluids_dao import FluidsDAO
+from .vital_service import VitalService
+
+
+BALANCE_OUTPUT_FIELDS = {"urine", "drain_output", "ng_output", "stool", "other_output"}
+
+
+class FluidService:
+    def __init__(self, fluids_dao: FluidsDAO, vital_service: VitalService):
+        self.fluids_dao = fluids_dao
+        self.vital_service = vital_service
+
+    def get_fluids(self, admission_id: int, date: datetime) -> List[FluidDTO]:
+        start, end = self.vital_service.get_effective_bounds(admission_id, date)
+        return self.fluids_dao.get_fluids(admission_id, start, end)
+
+    def add_fluid(self, dto: FluidDTO, shift_date: Optional[datetime] = None):
+        is_ok, msg = self.vital_service.validate_timestamp(dto.admission_id, dto.timestamp, shift_date)
+        if not is_ok:
+            raise ValueError(msg)
+        with self.fluids_dao.db.remcard_transaction():
+            self.fluids_dao.add_fluid(dto)
+
+    def upsert_hourly_output(self, admission_id: int, shift_date: datetime, hour: int, row_key: str, value: float, is_sum: bool = False):
+        """
+        Сохраняет выведение по конкретному часу и показателю.
+        Возвращает dict с metadata для undo.
+        """
+        if row_key not in BALANCE_OUTPUT_FIELDS:
+            raise ValueError(f"Unsupported fluid output field: {row_key}")
+
+        target_dt = self._resolve_hour_datetime(admission_id, shift_date, hour)
+        hour_key = target_dt.strftime("%Y-%m-%d %H")
+        value = float(value)
+
+        with self.fluids_dao.db.remcard_transaction() as cursor:
+            cursor.execute(
+                f"""
+                SELECT id, {row_key} AS current_value
+                FROM fluids
+                WHERE admission_id = ?
+                  AND STRFTIME('%Y-%m-%d %H', datetime) = ?
+                ORDER BY datetime ASC, id ASC
+                LIMIT 1
+                """,
+                (admission_id, hour_key),
+            )
+            row = cursor.fetchone()
+            if row:
+                old_value = float(row["current_value"] or 0.0)
+                new_value = old_value + value if is_sum else value
+                cursor.execute(
+                    f"""
+                    UPDATE fluids
+                    SET {row_key} = ?,
+                        last_modified_by = ?,
+                        updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'now')
+                    WHERE id = ?
+                    """,
+                    (new_value, "balance", row["id"]),
+                )
+                return {
+                    "action": "update",
+                    "fluid_id": row["id"],
+                    "old_value": old_value,
+                    "new_value": new_value,
+                }
+
+            dto = FluidDTO(
+                id=None,
+                admission_id=admission_id,
+                timestamp=target_dt,
+                last_modified_by="balance",
+            )
+            setattr(dto, row_key, value)
+            new_id = self.fluids_dao.add_fluid(dto)
+            return {
+                "action": "add",
+                "fluid_id": new_id,
+                "old_value": 0.0,
+                "new_value": value,
+            }
+
+    def restore_hourly_output(self, fluid_id: int, row_key: str, old_value: float):
+        if row_key not in BALANCE_OUTPUT_FIELDS:
+            raise ValueError(f"Unsupported fluid output field: {row_key}")
+        with self.fluids_dao.db.remcard_transaction() as cursor:
+            cursor.execute(
+                f"""
+                UPDATE fluids
+                SET {row_key} = ?,
+                    last_modified_by = ?,
+                    updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'now')
+                WHERE id = ?
+                """,
+                (float(old_value), "balance_undo", fluid_id),
+            )
+
+    def delete_fluid_by_id(self, fluid_id: int):
+        with self.fluids_dao.db.remcard_transaction():
+            self.fluids_dao.delete_fluid(fluid_id)
+
+    def get_fluid_row_by_id(self, fluid_id: int):
+        return self.fluids_dao.db.fetch_one_remcard("SELECT * FROM fluids WHERE id = ?", (fluid_id,))
+
+    def _resolve_hour_datetime(self, admission_id: int, shift_date: datetime, hour: int) -> datetime:
+        dt = shift_date.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if hour < 8 and shift_date.hour >= 8:
+            dt += timedelta(days=1)
+
+        # Если это час поступления, используем точное время поступления.
+        # Важно: нельзя округлять секунды/микросекунды вниз, иначе запись
+        # попадет "раньше admission_datetime" и исчезнет из выборки get_fluids(),
+        # где effective_start = max(shift_start, admission_datetime).
+        patient = self.vital_service.patient_dao.get_patient_by_id(admission_id)
+        if patient and patient.admission_datetime:
+            adm = patient.admission_datetime
+            if dt.date() == adm.date() and dt.hour == adm.hour:
+                dt = adm
+        return dt
