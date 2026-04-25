@@ -127,9 +127,9 @@ class DataCollectorWorker(QThread):
             marks = [None] * 24
             o.administrations = []
             for a in [a for a in all_admins if a['order_id'] == o.id]:
-                p_time = datetime.datetime.fromisoformat(a['planned_time'])
+                p_time = datetime.datetime.fromisoformat(str(a['planned_time']).replace(" ", "T"))
                 actual_raw = a.get('actual_time')
-                actual_time = datetime.datetime.fromisoformat(actual_raw) if actual_raw else None
+                actual_time = datetime.datetime.fromisoformat(str(actual_raw).replace(" ", "T")) if actual_raw else None
                 o.administrations.append(AdministrationDTO(
                     id=a['id'],
                     order_id=o.id,

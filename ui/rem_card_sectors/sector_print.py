@@ -294,7 +294,7 @@ class DataCollectorWorker(QThread):
             o.administrations = []
             
             for a in order_admins_rows:
-                p_time = datetime.datetime.fromisoformat(a['planned_time'])
+                p_time = datetime.datetime.fromisoformat(str(a['planned_time']).replace(" ", "T"))
                 admin_dto = AdministrationDTO(
                     id=a['id'], order_id=o.id, chain_id=a.get('chain_id'),
                     big_chain_id=a.get('big_chain_id'), cell_role=a.get('cell_role', 'single'),

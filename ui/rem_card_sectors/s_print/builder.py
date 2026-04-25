@@ -95,6 +95,12 @@ class ReportBuilder:
                 white-space: nowrap;
             }
 
+            .prescription-planned-mark {
+                font-size: 8pt;
+                color: #555;
+                vertical-align: middle;
+            }
+
             .prescription-arrow {
                 font-size: 7pt;
                 vertical-align: middle;

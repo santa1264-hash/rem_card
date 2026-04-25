@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
 
@@ -20,6 +20,7 @@ _MARK_ICONS = {
     NURSE_MARK_EXECUTED: (_icon_uri("done.png"), "Выполнено"),
     NURSE_MARK_NOT_EXECUTED: (_icon_uri("notdone.png"), "Не выполнено"),
 }
+_PLANNED_MARK_HTML = '<span class="prescription-planned-mark" title="Запланировано">&#9675;</span>'
 
 
 def _is_due(planned_time) -> bool:
@@ -32,7 +33,7 @@ def _is_due(planned_time) -> bool:
             planned_dt = datetime.fromisoformat(str(planned_time).replace(" ", "T"))
         except ValueError:
             return True
-    return planned_dt <= datetime.now()
+    return planned_dt + timedelta(hours=1) <= datetime.now()
 
 
 def _mark_icon_html(
@@ -84,17 +85,18 @@ def _render_mark(mark) -> str:
         size=7,
     )
     arrow = '<span class="prescription-arrow">→</span>'
+    planned_mark = "" if fallback_to_x else _PLANNED_MARK_HTML
 
     if role == 'single':
-        return icon
+        return icon or planned_mark
     if role == 'start':
-        return f"{icon} {arrow}".strip()
+        return f"{icon or planned_mark} {arrow}".strip()
     if role == 'body':
         if body_icon:
             return f'<span class="prescription-body-mark">{arrow}&nbsp;{body_icon}</span>'
         return arrow
     if role == 'end':
-        return f"{arrow} {icon}".strip()
+        return f"{arrow} {icon or planned_mark}".strip()
     return ""
 
 
