@@ -961,6 +961,7 @@ class DoctorRemCardWidget(QWidget):
         self.sector8_panel.refresh_clicked.connect(self.on_refresh_beds_clicked)
         self.sector8_panel.calc_clicked.connect(self.on_calculator_clicked)
         self.sector8_panel.add_patient_clicked.connect(self.on_add_patient_clicked)
+        self.sector8_panel.bonus_clicked.connect(self.on_bonus_clicked)
 
         if hasattr(self.layout_manager, 'beds_selection_widget'):
             self.layout_manager.beds_selection_widget.patient_selected.connect(self.on_patient_selected_from_list)
@@ -1617,6 +1618,16 @@ class DoctorRemCardWidget(QWidget):
         # Чистый запуск без передачи веса пациента (калькулятор стартует с 0)
         dialog = InfusionCalculatorDialog(parent=self)
         dialog.exec()
+
+    def on_bonus_clicked(self):
+        try:
+            from rem_card.app.runtime_paths import resolve_baza_dir
+            from rem_card.ui.shared.minigames.bonus_dialog import BonusDialog
+
+            dialog = BonusDialog(role="doctor", data_root_provider=resolve_baza_dir, parent=self)
+            dialog.exec()
+        except Exception as exc:
+            CustomMessageBox.warning(self, "Бонус", f"Не удалось открыть бонус:\n{exc}")
 
     def on_global_archive_clicked(self):
         self._exit_archive_read_only_mode()

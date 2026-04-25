@@ -8,6 +8,7 @@ class NurseSector8Panel(QWidget):
     exit_clicked = Signal()
     refresh_clicked = Signal()
     add_patient_clicked = Signal()
+    bonus_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,6 +66,15 @@ class NurseSector8Panel(QWidget):
         self.btn_add_patient.setStyleSheet(button_style)
         self.btn_add_patient.clicked.connect(self.add_patient_clicked.emit)
 
+        # Кнопка Бонус
+        self.btn_bonus = QPushButton(" Бонус")
+        bonus_icon = os.path.join(self.icon_dir, "bonus.png")
+        self.btn_bonus.setIcon(QIcon(bonus_icon))
+        self.btn_bonus.setIconSize(QSize(18, 18))
+        self.btn_bonus.setMinimumHeight(32)
+        self.btn_bonus.setStyleSheet(button_style)
+        self.btn_bonus.clicked.connect(self.bonus_clicked.emit)
+
         # 2. Кнопка Назад
         self.btn_back = QPushButton(" Назад")
         back_icon = os.path.join(self.icon_dir, "back.png")
@@ -85,6 +95,7 @@ class NurseSector8Panel(QWidget):
         # Добавляем только разрешенные кнопки
         self.layout.addWidget(self.btn_refresh)
         self.layout.addWidget(self.btn_add_patient)
+        self.layout.addWidget(self.btn_bonus)
         self.layout.addWidget(self.btn_back)
         self.layout.addWidget(self.btn_exit)
 
