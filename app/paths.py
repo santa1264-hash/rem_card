@@ -2,6 +2,7 @@ import os
 import sys
 
 from rem_card.app.runtime_paths import (
+    get_executable_dir,
     get_local_logs_dir,
     get_project_root,
     is_compiled as _runtime_is_compiled,
@@ -73,6 +74,8 @@ def get_icon_dir() -> str:
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "icon"))
 
 def get_user_dict_dir() -> str:
+    if is_compiled():
+        return os.path.join(get_executable_dir(), "rem_card", "data", "dictionaries")
     return get_seed_dir()
 
 NETWORK_ROOT = get_base_dir()

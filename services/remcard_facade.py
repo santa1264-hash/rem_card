@@ -64,12 +64,11 @@ class RemCardService(QObject):
         self._ventilation = VentilationService(ventilation_dao, data_service=data_service) if ventilation_dao else None
         self._shifts = ShiftService()
 
-        from rem_card.data.dao.diet_dao import DietPlanDAO, DietTemplateDAO, OralIntakeDAO
+        from rem_card.data.dao.diet_dao import DietPlanDAO, OralIntakeDAO
 
-        self.diet_templates_dao = DietTemplateDAO(self.orders_dao.db)
         self.diet_plan_dao = DietPlanDAO(self.orders_dao.db)
         self.oral_intake_dao = OralIntakeDAO(self.orders_dao.db)
-        self._diet_templates = DietTemplateService(self.diet_templates_dao)
+        self._diet_templates = DietTemplateService()
         self._diet_plan = DietPlanService(self.diet_plan_dao, self._diet_templates)
         self._oral_intake = OralIntakeService(self.oral_intake_dao, self._vitals, self._diet_plan)
 

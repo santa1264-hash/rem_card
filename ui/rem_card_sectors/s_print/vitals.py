@@ -1,8 +1,33 @@
-def render_vitals(data, hours):
-    html = '<div class="section">'
-    html += '<table class="data-table" width="100%" align="center">'
-    html += '<tr><th colspan="25" style="font-size: 12px; color: #2c3e50; padding: 5px; text-align: center; background-color: #f8f9fa;">ТАБЛИЦА ПОКАЗАТЕЛЕЙ</th></tr>'
-    html += '<tr><th class="name-cell">Час</th>' + "".join(f'<th class="matrix-cell">{h}</th>' for h in hours) + '</tr>'
+from .table_layout import (
+    cell_attrs,
+    cell_content,
+    colspan_cell_attrs,
+    hourly_widths,
+    render_hourly_colgroup,
+    table_width_attrs,
+)
+
+VITALS_NAME_WIDTH_PT = 50.0
+VITALS_CELL_STYLE = "font-size: 5pt; line-height: 1; padding-left: 0; padding-right: 0;"
+
+
+def render_vitals(data, hours, table_width_pt):
+    col_widths = hourly_widths(table_width_pt, VITALS_NAME_WIDTH_PT)
+    name_width = col_widths[0]
+    matrix_widths = col_widths[1:]
+
+    html = '<div class="section section-avoid vitals-section">'
+    html += f'<table class="report-table data-table" {table_width_attrs(table_width_pt)}>'
+    html += render_hourly_colgroup(table_width_pt, VITALS_NAME_WIDTH_PT)
+    html += '<thead>'
+    html += f'<tr class="table-title-row"><th colspan="25" {colspan_cell_attrs()}>ТАБЛИЦА ПОКАЗАТЕЛЕЙ</th></tr>'
+    html += f'<tr><th class="name-cell" {cell_attrs(name_width, VITALS_CELL_STYLE + " text-align: left;")}>Час</th>'
+    html += "".join(
+        f'<th class="matrix-cell" {cell_attrs(matrix_widths[i], VITALS_CELL_STYLE)}>{h}</th>'
+        for i, h in enumerate(hours)
+    )
+    html += '</tr>'
+    html += '</thead><tbody>'
     
     v_matrix = data.get("vitals_matrix", {})
     settings = data.get("vital_settings", {'ad': 1, 'pulse': 1, 'temp': 1, 'spo2': 1, 'rr': 0, 'cvp': 0})
@@ -20,7 +45,7 @@ def render_vitals(data, hours):
     for label, key, is_visible in indicators:
         if not is_visible: continue
         
-        row = f'<tr><td class="name-cell">{label}</td>'
+        row = f'<tr><td class="name-cell" {cell_attrs(name_width, VITALS_CELL_STYLE + " text-align: left;")}>{label}</td>'
         for i in range(24):
             val = ""
             if key == "ad":
@@ -32,7 +57,8 @@ def render_vitals(data, hours):
                 val = "Н/Н" if cvp_val == -1 else cvp_val
             else:
                 val = v_matrix.get(i, {}).get(key, "")
-            row += f'<td>{val}</td>'
+            extra_style = VITALS_CELL_STYLE + (" white-space: nowrap;" if key == "ad" else "")
+            row += f'<td class="matrix-cell" {cell_attrs(matrix_widths[i], extra_style)}>{cell_content(val)}</td>'
         html += row + '</tr>'
-    html += '</table></div>'
+    html += '</tbody></table></div>'
     return html

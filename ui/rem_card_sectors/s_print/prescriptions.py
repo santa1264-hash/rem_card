@@ -8,6 +8,17 @@ from rem_card.services.order_domain_service import (
     NURSE_MARK_NOT_EXECUTED,
 )
 
+from .table_layout import (
+    cell_attrs,
+    cell_content,
+    colspan_cell_attrs,
+    hourly_widths,
+    render_hourly_colgroup,
+    table_width_attrs,
+)
+
+PRESCRIPTION_NAME_WIDTH_PT = 120.0
+
 
 def _icon_uri(file_name: str) -> str:
     path = Path(get_icon_dir()) / file_name
@@ -112,13 +123,22 @@ def _is_explicit_not_done(mark) -> bool:
     return (mark.get("nurse_mark") or mark.get("comment") or "") == NURSE_MARK_NOT_EXECUTED
 
 
-def render_prescriptions(data, hours):
-    html = '<div class="section"><table class="data-table" width="100%" align="center">'
-    html += '<tr><th colspan="25" style="font-size: 12px; color: #2c3e50; padding: 5px; text-align: center; background-color: #f8f9fa;">ЛИСТ НАЗНАЧЕНИЙ</th></tr>'
-    html += '<tr><th class="name-cell">Препарат / Дозировка</th>' + "".join(f'<th class="matrix-cell">{h}</th>' for h in hours) + '</tr>'
+def render_prescriptions(data, hours, table_width_pt):
+    col_widths = hourly_widths(table_width_pt, PRESCRIPTION_NAME_WIDTH_PT)
+    name_width = col_widths[0]
+    matrix_widths = col_widths[1:]
+
+    html = f'<div class="section prescriptions-section"><table class="report-table data-table prescriptions-table" {table_width_attrs(table_width_pt)}>'
+    html += render_hourly_colgroup(table_width_pt, PRESCRIPTION_NAME_WIDTH_PT)
+    html += '<thead>'
+    html += f'<tr class="table-title-row"><th colspan="25" {colspan_cell_attrs()}>ЛИСТ НАЗНАЧЕНИЙ</th></tr>'
+    html += f'<tr><th class="name-cell" {cell_attrs(name_width, "text-align: left;")}>Препарат / Дозировка</th>'
+    html += "".join(f'<th class="matrix-cell" {cell_attrs(matrix_widths[i])}>{h}</th>' for i, h in enumerate(hours))
+    html += '</tr>'
+    html += '</thead><tbody>'
     p_matrix = data.get("prescriptions_matrix", [])
     if not p_matrix:
-        html += '<tr><td colspan="25" style="padding:20px;">Нет назначений за период</td></tr>'
+        html += '<tr><td colspan="25" style="border: 1px solid #999; padding:20px; text-align: center;">Нет назначений за период</td></tr>'
     else:
         for item in p_matrix:
             name_data = item["name"]
@@ -127,9 +147,9 @@ def render_prescriptions(data, hours):
             else:
                 name_display = str(name_data)
                 
-            row = f'<tr><td class="name-cell">{name_display}</td>'
+            row = f'<tr><td class="name-cell" {cell_attrs(name_width, "text-align: left;")}>{cell_content(name_display)}</td>'
             stopped_chains = set()
-            for mark in item["marks"]:
+            for i, mark in enumerate(item["marks"]):
                 chain_key = _chain_key(mark)
                 if chain_key and chain_key in stopped_chains:
                     display = ""
@@ -137,7 +157,7 @@ def render_prescriptions(data, hours):
                     display = _render_mark(mark)
                     if chain_key and _is_explicit_not_done(mark):
                         stopped_chains.add(chain_key)
-                row += f'<td>{display}</td>'
+                row += f'<td class="matrix-cell" {cell_attrs(matrix_widths[i])}>{cell_content(display)}</td>'
             html += row + '</tr>'
-    html += '</table></div>'
+    html += '</tbody></table></div>'
     return html

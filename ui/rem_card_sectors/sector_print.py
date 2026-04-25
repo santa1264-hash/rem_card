@@ -455,14 +455,14 @@ class SectorPrint(BaseSectorWidget):
         self.cb_vitals = QCheckBox("Таблица показателей")
         self.cb_balance = QCheckBox("Баланс")
         self.cb_prescriptions = QCheckBox("Назначения")
-        self.cb_events = QCheckBox("События")
+        self.cb_events = QCheckBox("Движение")
         self.cb_ventilation = QCheckBox("ИВЛ")
         self.cb_labs = QCheckBox("Анализы")
         self.cb_labs.setEnabled(False)
         self.cb_procedures = QCheckBox("Процедуры")
         self.cb_procedures.setEnabled(False)
         
-        for cb in [self.cb_vitals, self.cb_prescriptions, self.cb_balance, self.cb_events, self.cb_ventilation, self.cb_labs, self.cb_procedures]:
+        for cb in [self.cb_vitals, self.cb_prescriptions, self.cb_balance, self.cb_ventilation, self.cb_events, self.cb_labs, self.cb_procedures]:
             body_layout.addWidget(cb)
             
         self.status_label = QLabel("")

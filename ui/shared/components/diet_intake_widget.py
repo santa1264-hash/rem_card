@@ -409,8 +409,6 @@ class DietIntakeWidget(QWidget):
             placeholder = "Выбрать питание..." if self.role == "doctor" else "Питание не выбрано"
             self.template_combo.addItem(placeholder, None)
             current_template_id = self._draft_template_id
-            if current_template_id is None:
-                current_template_id = getattr(self._plan, "template_id", None)
             selected_index = 0
             for template in self._templates:
                 self.template_combo.addItem(template.name, int(template.id))
@@ -517,9 +515,6 @@ class DietIntakeWidget(QWidget):
             return
 
         expected_version = getattr(self._plan, "version", None)
-        template_id = self._draft_template_id
-        if template_id is None:
-            template_id = getattr(self._plan, "template_id", None)
         diet_text = self._draft_diet_text
         if diet_text is None:
             diet_text = getattr(self._plan, "diet_text", "") if self._plan else ""
@@ -530,7 +525,7 @@ class DietIntakeWidget(QWidget):
                 self.shift_date,
                 diet_text,
                 items,
-                template_id=template_id,
+                template_id=None,
                 expected_version=expected_version,
             )
 

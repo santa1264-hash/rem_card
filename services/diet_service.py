@@ -1,15 +1,14 @@
 import json
-import re
+import os
+import tempfile
 from datetime import datetime
 from typing import Any, List, Optional
 
-from rem_card.data.dao.diet_dao import DietPlanDAO, DietTemplateDAO, OralIntakeDAO
+from rem_card.app.paths import USER_DICT_DIR
+from rem_card.data.dao.diet_dao import DietPlanDAO, OralIntakeDAO
 from rem_card.data.dao.exceptions import OptimisticLockError
 from rem_card.data.dto.remcard_dto import DietPlanDTO, DietTemplateDTO, OralIntakeEventDTO
 from rem_card.services.shift_service import ShiftService
-
-
-TIME_RE = re.compile(r"^\d{2}:\d{2}$")
 
 
 def _dt_to_db(value: datetime) -> str:
@@ -39,7 +38,7 @@ def normalize_schedule(schedule: Any) -> str:
         if not isinstance(item, dict):
             raise ValueError("Строка расписания питания должна быть объектом")
         time_text = str(item.get("time") or "").strip()
-        if not TIME_RE.fullmatch(time_text) or not ShiftService.is_time_input_valid(time_text):
+        if not ShiftService.is_time_input_valid(time_text):
             raise ValueError("Время питания должно быть в формате HH:mm")
         normalized_time = ShiftService.normalize_time(time_text)
         if normalized_time in seen_times:
@@ -66,7 +65,7 @@ def schedule_items(schedule_json: str) -> list[dict[str, int | str]]:
         if not isinstance(item, dict):
             continue
         time_text = str(item.get("time") or "").strip()
-        if not TIME_RE.fullmatch(time_text) or not ShiftService.is_time_input_valid(time_text):
+        if not ShiftService.is_time_input_valid(time_text):
             continue
         try:
             amount = int(float(item.get("amount") or 0))
@@ -79,29 +78,196 @@ def schedule_items(schedule_json: str) -> list[dict[str, int | str]]:
     return result
 
 
-class DietTemplateService:
-    def __init__(self, dao: DietTemplateDAO):
-        self.dao = dao
+DIET_TEMPLATES_FILE_NAME = "diet_templates.json"
+
+
+def _now_text() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _as_bool_int(value: Any) -> int:
+    if isinstance(value, str):
+        return 1 if value.strip().lower() in ("1", "true", "yes", "y", "да") else 0
+    return 1 if bool(value) else 0
+
+
+class DietTemplateFileStore:
+    def __init__(self, path: Optional[str] = None):
+        self.path = path or os.path.join(USER_DICT_DIR, DIET_TEMPLATES_FILE_NAME)
+
+    def exists(self) -> bool:
+        return os.path.exists(self.path)
+
+    def load(self) -> tuple[dict[str, Any], List[DietTemplateDTO]]:
+        payload = self._read_payload()
+        return payload, self._templates_from_payload(payload)
 
     def list_templates(self) -> List[DietTemplateDTO]:
-        return self.dao.list_templates()
+        _, templates = self.load()
+        return templates
+
+    def save_templates(self, templates: List[DietTemplateDTO], *, next_id: Optional[int] = None):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        ordered = self._sort_templates(templates)
+        max_id = max((int(t.id or 0) for t in ordered), default=0)
+        payload = {
+            "next_id": int(next_id if next_id is not None else max_id + 1),
+            "templates": [self._dto_to_json(t) for t in ordered],
+        }
+        directory = os.path.dirname(self.path)
+        fd, tmp_path = tempfile.mkstemp(prefix=".diet_templates_", suffix=".json", dir=directory)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False, indent=2)
+                fh.write("\n")
+            os.replace(tmp_path, self.path)
+        except Exception:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    def next_id(self, payload: dict[str, Any], templates: List[DietTemplateDTO]) -> int:
+        max_id = max((int(t.id or 0) for t in templates), default=0)
+        try:
+            configured_next = int(payload.get("next_id") or 0)
+        except Exception:
+            configured_next = 0
+        return max(1, max_id + 1, configured_next)
+
+    def _read_payload(self) -> dict[str, Any]:
+        if not os.path.exists(self.path):
+            return {"next_id": 1, "templates": []}
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Файл шаблонов питания поврежден: {self.path} ({exc})") from exc
+
+        if isinstance(payload, list):
+            return {"templates": payload}
+        if not isinstance(payload, dict):
+            raise ValueError(f"Файл шаблонов питания должен быть JSON-объектом: {self.path}")
+        return payload
+
+    def _templates_from_payload(self, payload: dict[str, Any]) -> List[DietTemplateDTO]:
+        raw_templates = payload.get("templates", [])
+        items: list[tuple[Any, dict[str, Any]]] = []
+        if isinstance(raw_templates, dict):
+            for key, item in raw_templates.items():
+                if isinstance(item, dict):
+                    items.append((key, dict(item)))
+        elif isinstance(raw_templates, list):
+            for index, item in enumerate(raw_templates, start=1):
+                if isinstance(item, dict):
+                    items.append((index, dict(item)))
+        else:
+            raise ValueError("Поле templates в diet_templates.json должно быть списком или объектом")
+
+        templates: List[DietTemplateDTO] = []
+        used_ids: set[int] = set()
+        now = _now_text()
+        for fallback_id, raw in items:
+            if raw.get("_deleted"):
+                continue
+            template_id = self._coerce_id(raw.get("id", fallback_id), used_ids)
+            used_ids.add(template_id)
+            name = str(raw.get("name") or "").strip()
+            if not name:
+                raise ValueError(f"В шаблоне питания id={template_id} не указано название")
+            schedule_source = raw.get("schedule", raw.get("schedule_json", []))
+            templates.append(
+                DietTemplateDTO(
+                    id=template_id,
+                    name=name,
+                    diet_text=str(raw.get("diet_text") or raw.get("description") or ""),
+                    schedule_json=normalize_schedule(schedule_source),
+                    is_default=_as_bool_int(raw.get("is_default", raw.get("default", False))),
+                    version=self._coerce_int(raw.get("version"), default=1),
+                    created_at=str(raw.get("created_at") or now),
+                    updated_at=str(raw.get("updated_at") or now),
+                    last_modified_by=str(raw.get("last_modified_by") or "doctor"),
+                )
+            )
+        return self._sort_templates(templates)
+
+    @staticmethod
+    def _coerce_id(value: Any, used_ids: set[int]) -> int:
+        try:
+            template_id = int(value)
+        except Exception:
+            template_id = 0
+        if template_id <= 0 or template_id in used_ids:
+            template_id = max(used_ids or {0}) + 1
+        return template_id
+
+    @staticmethod
+    def _coerce_int(value: Any, *, default: int) -> int:
+        try:
+            result = int(value)
+        except Exception:
+            result = int(default)
+        return max(1, result)
+
+    @staticmethod
+    def _sort_templates(templates: List[DietTemplateDTO]) -> List[DietTemplateDTO]:
+        return sorted(
+            templates,
+            key=lambda item: (
+                -int(item.is_default or 0),
+                str(item.name or "").lower(),
+                int(item.id or 0),
+            ),
+        )
+
+    @staticmethod
+    def _dto_to_json(template: DietTemplateDTO) -> dict[str, Any]:
+        return {
+            "id": int(template.id or 0),
+            "name": template.name or "",
+            "diet_text": template.diet_text or "",
+            "schedule": schedule_items(template.schedule_json),
+            "is_default": bool(template.is_default),
+            "version": int(template.version or 1),
+            "created_at": template.created_at or _now_text(),
+            "updated_at": template.updated_at or _now_text(),
+            "last_modified_by": template.last_modified_by or "doctor",
+        }
+
+
+class DietTemplateService:
+    def __init__(self, file_store: Optional[DietTemplateFileStore] = None):
+        self.file_store = file_store or DietTemplateFileStore()
+        self._ensure_file_initialized()
+
+    def list_templates(self) -> List[DietTemplateDTO]:
+        return self.file_store.list_templates()
 
     def get_template(self, template_id: int) -> DietTemplateDTO:
-        template = self.dao.get_template(template_id)
+        template = self._find_template(template_id)
         if not template:
             raise ValueError("Шаблон питания не найден")
         return template
 
     def create_template(self, name: str, diet_text: str = "", schedule_json: Any = None, is_default: bool = False):
+        payload, templates = self.file_store.load()
+        new_id = self.file_store.next_id(payload, templates)
+        now = _now_text()
         dto = DietTemplateDTO(
+            id=new_id,
             name=self._normalize_name(name),
             diet_text=str(diet_text or ""),
             schedule_json=normalize_schedule(schedule_json),
             is_default=1 if is_default else 0,
+            version=1,
+            created_at=now,
+            updated_at=now,
             last_modified_by="doctor",
         )
-        with self.dao.db.remcard_transaction(source="diet_template_create") as cursor:
-            return self.dao.create_template(dto, cursor=cursor)
+        templates.append(dto)
+        self.file_store.save_templates(templates, next_id=new_id + 1)
+        return new_id
 
     def update_template(
         self,
@@ -112,22 +278,36 @@ class DietTemplateService:
         is_default: bool = False,
         expected_version: Optional[int] = None,
     ):
-        current = self.get_template(template_id)
+        payload, templates = self.file_store.load()
+        current = self._find_template_in_list(templates, template_id)
+        if not current:
+            raise ValueError("Шаблон питания не найден")
+        expected = int(expected_version if expected_version is not None else current.version or 0)
+        if expected > 0 and int(current.version or 0) != expected:
+            raise OptimisticLockError("Шаблон питания был изменен другим пользователем")
         dto = DietTemplateDTO(
             id=int(template_id),
             name=self._normalize_name(name),
             diet_text=str(diet_text or ""),
             schedule_json=normalize_schedule(schedule_json),
             is_default=1 if is_default else 0,
-            version=int(expected_version if expected_version is not None else current.version or 0),
+            version=int(current.version or 0) + 1,
+            created_at=current.created_at,
+            updated_at=_now_text(),
             last_modified_by="doctor",
         )
-        with self.dao.db.remcard_transaction(source="diet_template_update") as cursor:
-            self.dao.update_template(dto, expected_version=dto.version, cursor=cursor)
+        updated = [dto if int(t.id) == int(template_id) else t for t in templates]
+        self.file_store.save_templates(updated, next_id=self.file_store.next_id(payload, templates))
 
     def delete_template(self, template_id: int, expected_version: Optional[int] = None):
-        with self.dao.db.remcard_transaction(source="diet_template_delete") as cursor:
-            self.dao.delete_template(template_id, expected_version=expected_version, cursor=cursor)
+        payload, templates = self.file_store.load()
+        current = self._find_template_in_list(templates, template_id)
+        if not current:
+            raise ValueError("Шаблон питания не найден")
+        if expected_version is not None and int(expected_version) > 0 and int(current.version or 0) != int(expected_version):
+            raise OptimisticLockError("Шаблон питания был изменен другим пользователем")
+        remaining = [t for t in templates if int(t.id) != int(template_id)]
+        self.file_store.save_templates(remaining, next_id=self.file_store.next_id(payload, templates))
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -135,6 +315,24 @@ class DietTemplateService:
         if not normalized:
             raise ValueError("Название шаблона питания обязательно")
         return normalized
+
+    def _ensure_file_initialized(self):
+        if self.file_store.exists():
+            self.file_store.list_templates()
+            return
+
+        self.file_store.save_templates([], next_id=1)
+
+    def _find_template(self, template_id: int) -> Optional[DietTemplateDTO]:
+        templates = self.list_templates()
+        return self._find_template_in_list(templates, template_id)
+
+    @staticmethod
+    def _find_template_in_list(templates: List[DietTemplateDTO], template_id: int) -> Optional[DietTemplateDTO]:
+        for template in templates:
+            if int(template.id or 0) == int(template_id):
+                return template
+        return None
 
 
 class DietPlanService:
@@ -160,7 +358,7 @@ class DietPlanService:
         dto = DietPlanDTO(
             admission_id=int(admission_id),
             shift_start=self.shift_start_for_date(shift_date),
-            template_id=int(template_id),
+            template_id=None,
             diet_text=template.diet_text,
             schedule_json=template.schedule_json,
             last_modified_by="doctor",
@@ -179,7 +377,7 @@ class DietPlanService:
         dto = DietPlanDTO(
             admission_id=int(admission_id),
             shift_start=self.shift_start_for_date(shift_date),
-            template_id=template_id,
+            template_id=None,
             diet_text=str(diet_text or ""),
             schedule_json=normalize_schedule(schedule_json),
             last_modified_by="doctor",

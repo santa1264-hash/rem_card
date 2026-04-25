@@ -1,21 +1,42 @@
-def render_balance(data, hours):
+from .table_layout import (
+    cell_attrs,
+    cell_content,
+    colspan_cell_attrs,
+    hourly_widths,
+    render_hourly_colgroup,
+    table_width_attrs,
+)
+
+BALANCE_NAME_WIDTH_PT = 120.0
+
+
+def render_balance(data, hours, table_width_pt):
+    col_widths = hourly_widths(table_width_pt, BALANCE_NAME_WIDTH_PT)
+    name_width = col_widths[0]
+    matrix_widths = col_widths[1:]
+
     bf = data.get("balance_final", {})
     out_hourly = bf.get("out_hourly", {})
     
-    html = '<div class="section"><table class="data-table" width="100%" align="center">'
-    html += '<tr><th colspan="25" style="font-size: 12px; color: #2c3e50; padding: 5px; text-align: center; background-color: #f8f9fa;">ПОЧАСОВОЕ ВЫВЕДЕНИЕ</th></tr>'
-    html += '<tr><th class="name-cell">Тип</th>' + "".join(f'<th class="matrix-cell">{h}</th>' for h in hours) + '</tr>'
+    html = f'<div class="section section-avoid balance-section"><table class="report-table data-table" {table_width_attrs(table_width_pt)}>'
+    html += render_hourly_colgroup(table_width_pt, BALANCE_NAME_WIDTH_PT)
+    html += '<thead>'
+    html += f'<tr class="table-title-row"><th colspan="25" {colspan_cell_attrs()}>ПОЧАСОВОЕ ВЫВЕДЕНИЕ</th></tr>'
+    html += f'<tr><th class="name-cell" {cell_attrs(name_width, "text-align: left;")}>Тип</th>'
+    html += "".join(f'<th class="matrix-cell" {cell_attrs(matrix_widths[i])}>{h}</th>' for i, h in enumerate(hours))
+    html += '</tr>'
+    html += '</thead><tbody>'
     for lab, k in [("Диурез", "urine"), ("Дренажи", "drain"), ("ЖКТ (зонд)", "ng"), ("Рвота", "stool"), ("Другое", "other")]:
-        row = f'<tr><td class="name-cell">{lab}</td>'
+        row = f'<tr><td class="name-cell" {cell_attrs(name_width, "text-align: left;")}>{lab}</td>'
         for i in range(24):
             val = out_hourly.get(i, {}).get(k, "")
             if val:
                 val = str(int(round(float(val))))
             else:
                 val = ""
-            row += f'<td>{val}</td>'
+            row += f'<td class="matrix-cell" {cell_attrs(matrix_widths[i])}>{cell_content(val)}</td>'
         html += row + '</tr>'
-    html += '</table></div>'
+    html += '</tbody></table>'
 
     # Подсчет гидробаланса
     # Используем данные на текущий час ("current" и "out_cur") вместо полных суток
@@ -27,8 +48,8 @@ def render_balance(data, hours):
     total_out = int(sum(out_cur.values()))
     net_balance = total_in - total_out
     
-    html += f'<div style="text-align: left; font-size: 11pt; font-weight: bold; margin-top: 15px; margin-bottom: 10px; margin-left: 1%;">'
+    html += f'<div class="balance-summary">'
     html += f'Гидробаланс: Введено на текущий час ({total_in} мл) - Выведено на текущий час ({total_out} мл) = {net_balance} мл'
-    html += '</div>'
+    html += '</div></div>'
     
     return html
