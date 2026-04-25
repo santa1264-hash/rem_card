@@ -426,7 +426,10 @@ class RemCardService(QObject):
         from ..data.dto.remcard_dto import AdministrationDTO
         from .balance_calculator import BalanceCalculator
 
-        effective_start, effective_end = self.get_effective_bounds(admission_id, shift_date)
+        if hasattr(self._fluids, "get_balance_bounds"):
+            effective_start, effective_end = self._fluids.get_balance_bounds(admission_id, shift_date)
+        else:
+            effective_start, effective_end = self.get_effective_bounds(admission_id, shift_date)
         fluids = self.get_fluids(admission_id, shift_date)
         orders = self.get_orders(admission_id, shift_date, only_committed=only_committed)
 
@@ -476,6 +479,9 @@ class RemCardService(QObject):
         outcome_time = None
         if current_status and current_status.status.is_outcome():
             outcome_time = current_status.start_time
+        terminal_transfer_time = getattr(patient, "transfer_datetime", None) if patient else None
+        if current_status and not current_status.status.is_outcome():
+            terminal_transfer_time = None
 
         now = datetime.now()
         calc_time = now if start_dt <= now < end_dt else end_dt
@@ -483,7 +489,7 @@ class RemCardService(QObject):
             orders=orders,
             current_time=calc_time,
             end_of_card=end_dt,
-            transfer_time=getattr(patient, "transfer_datetime", None) if patient else None,
+            transfer_time=terminal_transfer_time,
             active_intervals=active_intervals,
             outcome_time=outcome_time,
         )
@@ -495,7 +501,7 @@ class RemCardService(QObject):
                 "orders": orders,
                 "start_dt": start_dt,
                 "end_dt": end_dt,
-                "transfer_time": getattr(patient, "transfer_datetime", None) if patient else None,
+                "transfer_time": terminal_transfer_time,
                 "active_intervals": active_intervals,
                 "outcome_time": outcome_time,
             },

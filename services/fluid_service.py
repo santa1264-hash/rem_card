@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from datetime import datetime, timedelta
 from ..data.dto.remcard_dto import FluidDTO
 from ..data.dao.fluids_dao import FluidsDAO
@@ -6,6 +6,7 @@ from .vital_service import VitalService
 
 
 BALANCE_OUTPUT_FIELDS = {"urine", "drain_output", "ng_output", "stool", "other_output"}
+BALANCE_OUTCOME_GRACE = timedelta(hours=1)
 
 
 class FluidService:
@@ -14,8 +15,43 @@ class FluidService:
         self.vital_service = vital_service
 
     def get_fluids(self, admission_id: int, date: datetime) -> List[FluidDTO]:
-        start, end = self.vital_service.get_effective_bounds(admission_id, date)
+        start, end = self.get_balance_bounds(admission_id, date)
         return self.fluids_dao.get_fluids(admission_id, start, end)
+
+    def get_balance_bounds(self, admission_id: int, date: datetime) -> Tuple[datetime, datetime]:
+        """
+        Границы именно для баланса жидкости.
+
+        В UI для баланса уже используется правило "исход + 1 час": после
+        перевода/смерти можно закрыть ближайший час выведения. Обычные
+        effective_bounds режут данные ровно по времени исхода, из-за чего
+        запись 16:00 исчезала при исходе в 15:40.
+        """
+        shift_start, shift_end = self.vital_service.shift_service.get_day_period(date)
+        patient = self.vital_service.patient_dao.get_patient_by_id(admission_id)
+        start = max(shift_start, patient.admission_datetime) if patient and patient.admission_datetime else shift_start
+        end = shift_end
+
+        terminal_dt = None
+        status_service = getattr(self.vital_service, "status_service", None)
+        if status_service:
+            try:
+                status_event = status_service.get_current_status(admission_id)
+            except Exception:
+                status_event = None
+            status_value = getattr(status_event, "status", None)
+            if status_event and getattr(status_value, "is_outcome", lambda: False)():
+                terminal_dt = status_event.start_time
+            elif status_event:
+                terminal_dt = None
+            elif patient:
+                terminal_dt = getattr(patient, "transfer_datetime", None)
+        elif patient:
+            terminal_dt = getattr(patient, "transfer_datetime", None)
+
+        if terminal_dt:
+            end = min(shift_end, terminal_dt + BALANCE_OUTCOME_GRACE)
+        return max(start, shift_start), min(end, shift_end)
 
     def add_fluid(self, dto: FluidDTO, shift_date: Optional[datetime] = None):
         is_ok, msg = self.vital_service.validate_timestamp(dto.admission_id, dto.timestamp, shift_date)
@@ -33,6 +69,12 @@ class FluidService:
             raise ValueError(f"Unsupported fluid output field: {row_key}")
 
         target_dt = self._resolve_hour_datetime(admission_id, shift_date, hour)
+        start_dt, end_dt = self.get_balance_bounds(admission_id, shift_date)
+        if target_dt < start_dt or target_dt >= end_dt:
+            raise ValueError(
+                "Время вне допустимого периода баланса "
+                f"({start_dt.strftime('%d.%m %H:%M')} - {end_dt.strftime('%d.%m %H:%M')})"
+            )
         hour_key = target_dt.strftime("%Y-%m-%d %H")
         value = float(value)
 

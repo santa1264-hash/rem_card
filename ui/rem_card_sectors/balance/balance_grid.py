@@ -122,10 +122,9 @@ class BalanceGridWidget(QTableWidget):
                     if existing_item.text() != new_text:
                         existing_item.setText(new_text)
                 else:
-                    if new_text:
-                        item = QTableWidgetItem(new_text)
-                        item.setTextAlignment(Qt.AlignCenter)
-                        self.setItem(row, col, item)
+                    item = QTableWidgetItem(new_text)
+                    item.setTextAlignment(Qt.AlignCenter)
+                    self.setItem(row, col, item)
 
         # 3. Восстанавливаем выделение
         if curr_row >= 0 and curr_col >= 0:
@@ -136,17 +135,21 @@ class BalanceGridWidget(QTableWidget):
     def get_selected_info(self):
         """Возвращает (row_key, hour, current_value) для выделенной ячейки."""
         items = self.selectedItems()
-        if not items:
-            return None, None, 0
-        
-        item = items[0]
-        row = item.row()
-        col = item.column()
+        if items:
+            item = items[0]
+            row = item.row()
+            col = item.column()
+        else:
+            row = self.currentRow()
+            col = self.currentColumn()
+            if row < 0 or col < 0:
+                return None, None, 0
         hour = (col + 8) % 24
         row_key = self.rows_map[row]
         
         try:
-            val = int(item.text())
+            item = self.item(row, col)
+            val = int(item.text()) if item and item.text() else 0
         except:
             val = 0
             

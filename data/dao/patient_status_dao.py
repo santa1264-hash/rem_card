@@ -584,12 +584,13 @@ class PatientStatusDAO:
             with self.db.remcard_transaction() as cursor:
                 # 1. Ищем текущее активное событие
                 cursor.execute(
-                    "SELECT id FROM patient_status_events WHERE admission_id = ? AND end_time IS NULL",
+                    "SELECT id, status FROM patient_status_events WHERE admission_id = ? AND end_time IS NULL",
                     (admission_id,)
                 )
                 current = cursor.fetchone()
                 if not current:
                     return False
+                current_status = current["status"]
 
                 # 2. Проверяем, сколько всего событий. Нельзя удалять единственное (начальное).
                 cursor.execute(
@@ -605,7 +606,7 @@ class PatientStatusDAO:
 
                 # 4. Находим предыдущее событие и открываем его
                 cursor.execute("""
-                    SELECT id FROM patient_status_events 
+                    SELECT id, status FROM patient_status_events 
                     WHERE admission_id = ? 
                     ORDER BY start_time DESC LIMIT 1
                 """, (admission_id,))
@@ -615,6 +616,33 @@ class PatientStatusDAO:
                         "UPDATE patient_status_events SET end_time = NULL, updated_at = ? WHERE id = ?",
                         (datetime.now().isoformat(), prev['id'])
                     )
+
+                    current_is_outcome = current_status in (
+                        PatientStatus.TRANSFERRED.value,
+                        PatientStatus.DEAD.value,
+                    )
+                    previous_is_outcome = prev["status"] in (
+                        PatientStatus.TRANSFERRED.value,
+                        PatientStatus.DEAD.value,
+                    )
+                    if current_is_outcome and not previous_is_outcome:
+                        cursor.execute(
+                            """
+                            UPDATE admissions
+                            SET outcome = NULL,
+                                transfer_datetime = NULL,
+                                transfer_department = NULL,
+                                transfer_lpu = NULL,
+                                transfer_lpu_other = NULL,
+                                death_datetime = NULL,
+                                clinical_death_datetime = NULL,
+                                cardiac_arrest_cause = NULL,
+                                cardiac_arrest_measures_json = NULL,
+                                updated_at = ?
+                            WHERE id = ?
+                            """,
+                            (datetime.now().replace(microsecond=0).isoformat(), admission_id),
+                        )
                     
                 # При откате статуса мы НЕ трогаем is_active госпитализации
                 return True

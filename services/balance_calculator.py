@@ -209,6 +209,8 @@ class BalanceCalculator:
         daily_limit = end_of_card
         valid_transfer = transfer_time and transfer_time.year > 2020
         terminal_time = outcome_time if outcome_time else (transfer_time if valid_transfer else None)
+        if terminal_time:
+            terminal_time = terminal_time + timedelta(hours=1)
         if terminal_time and terminal_time < daily_limit: daily_limit = terminal_time
 
         cls._maybe_reload_engine()

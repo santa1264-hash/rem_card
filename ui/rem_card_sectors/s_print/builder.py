@@ -66,6 +66,7 @@ class ReportBuilder:
                 border: 1px solid #999;
                 padding: 1px;
                 text-align: center;
+                vertical-align: middle;
                 font-size: 6pt;
                 font-family: "Arial Narrow", Arial, sans-serif;
             }
