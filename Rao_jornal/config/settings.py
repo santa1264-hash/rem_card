@@ -1,5 +1,5 @@
 import os
-from rem_card.app.paths import get_base_dir, get_resources_dir, get_icon_dir
+from rem_card.app.paths import BAZA_DIR, BAZA_LOGS_DIR, ensure_directories, get_base_dir, get_resources_dir, get_icon_dir
 
 # 1. Основные корни
 PROJECT_ROOT = get_base_dir()        # Корень данных (Project)
@@ -15,11 +15,11 @@ FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 MKB_DB_PATH = os.path.join(BASE_DIR, "mkb", "mkb10.db")
 
 # 3. Директории данных (архив, логи, бэкапы) - они ВСЕГДА ВНЕ EXE
-APP_DATA_DIR = os.path.join(PROJECT_ROOT, "Baza_rao3_jurnal")
+APP_DATA_DIR = BAZA_DIR
 
 DATABASE_DIR = os.path.join(APP_DATA_DIR, 'database')
 ARCHIVE_DIR = os.path.join(APP_DATA_DIR, 'archiv')
-LOG_DIR = os.path.join(APP_DATA_DIR, 'logs')
+LOG_DIR = BAZA_LOGS_DIR
 BACKUP_DIR = os.path.join(APP_DATA_DIR, 'backups')
 REPORT_DIR = os.path.join(APP_DATA_DIR, 'report')
 
@@ -29,9 +29,7 @@ if os.environ.get("RAO_DEBUG_PATHS") == "1":
     print(f"DEBUG: APP_DATA_DIR = {APP_DATA_DIR}")
     print(f"DEBUG: BASE_DIR = {BASE_DIR}")
 
-# Создаем структуру папок данных, если её нет
-for d in [DATABASE_DIR, ARCHIVE_DIR, LOG_DIR, BACKUP_DIR, REPORT_DIR]:
-    os.makedirs(d, exist_ok=True)
+ensure_directories()
 
 LOG_FILE = os.path.join(LOG_DIR, 'app.log')
 

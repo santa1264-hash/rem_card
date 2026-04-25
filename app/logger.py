@@ -6,13 +6,19 @@ import functools
 from datetime import datetime
 
 from rem_card.app.paths import LOGS_DIR, ensure_directories
+from rem_card.app.runtime_paths import cleanup_old_local_logs, get_log_file_prefix
 
 def setup_logger():
     ensure_directories()
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    cleanup_old_local_logs(LOGS_DIR)
 
-    log_file = os.path.join(LOGS_DIR, f"rem_card_{datetime.now().strftime('%Y%m%d')}.log")
+    log_file = os.path.join(LOGS_DIR, f"{get_log_file_prefix()}_{datetime.now().strftime('%Y%m%d')}.log")
     
     logger = logging.getLogger("RemCard")
+    if getattr(logger, "_remcard_configured", False):
+        return logger
+
     # Меняем уровень на INFO, чтобы избежать спама DEBUG логов (например, SQL-запросов)
     logger.setLevel(logging.INFO)
 
@@ -28,6 +34,7 @@ def setup_logger():
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
+    logger._remcard_configured = True
 
     return logger
 

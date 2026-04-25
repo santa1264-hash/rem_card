@@ -10,6 +10,10 @@ from typing import Optional
 
 from rem_card.Rao_jornal.config.settings import ARCHIVE_DIR, BACKUP_DIR, MAX_BACKUPS, NUM_BEDS
 from rem_card.app.db_lifecycle import DB_CYCLE_META_KEY, maybe_rotate_database_if_due
+from rem_card.app.db_availability import (
+    is_database_unavailable_error,
+    notify_database_unavailable,
+)
 from rem_card.app.durable_sql_outbox import (
     DeferredWriteCursor,
     DurableSqlOutbox,
@@ -54,6 +58,7 @@ OUTBOX_HEALTH_WARN_PENDING = max(
     1,
     int(os.environ.get("REMCARD_OUTBOX_HEALTH_WARN_PENDING", "40")),
 )
+DEFERRED_WRITE_FALLBACK_ENABLED = os.environ.get("REMCARD_DEFERRED_WRITE_FALLBACK", "0") == "1"
 STARTUP_QUICKCHECK_TTL_SEC = max(
     0.0,
     float(os.environ.get("REMCARD_STARTUP_QUICKCHECK_TTL_SEC", "120")),
@@ -107,10 +112,10 @@ class DBManager:
         self._last_backup_ts = time.time()
         self._integrity_stop_evt = threading.Event()
         self._integrity_thread: Optional[threading.Thread] = None
-        self._local_first_enabled = os.environ.get("REMCARD_LOCAL_FIRST_SYNC", "1") != "0"
+        self._local_first_enabled = os.environ.get("REMCARD_LOCAL_FIRST_SYNC", "0") == "1"
         self._local_sync_interval_sec = max(1.0, float(os.environ.get("REMCARD_LOCAL_SYNC_INTERVAL_SEC", "5")))
         self._local_replica: Optional[LocalReplicaSync] = None
-        self._outbox_enabled = os.environ.get("REMCARD_LOCAL_OUTBOX_SYNC", "1") != "0"
+        self._outbox_enabled = os.environ.get("REMCARD_LOCAL_OUTBOX_SYNC", "0") == "1"
         self._outbox_replay_interval_sec = max(1.0, float(os.environ.get("REMCARD_LOCAL_OUTBOX_REPLAY_SEC", str(OUTBOX_REPLAY_INTERVAL_SEC))))
         self._outbox: Optional[DurableSqlOutbox] = None
         self._outbox_stop_evt = threading.Event()
@@ -415,16 +420,26 @@ class DBManager:
         return time.time() >= self._prefer_central_reads_until
 
     def _fetch_all_central(self, query: str, parameters: tuple = ()):
-        with self.write_controller.connection_guard(self.conn):
-            cursor = self.conn.cursor()
-            cursor.execute(query, parameters)
-            return cursor.fetchall()
+        try:
+            with self.write_controller.connection_guard(self.conn):
+                cursor = self.conn.cursor()
+                cursor.execute(query, parameters)
+                return cursor.fetchall()
+        except Exception as exc:
+            if is_database_unavailable_error(exc):
+                raise notify_database_unavailable(exc, context="journal_read_all", logger=self.logger) from exc
+            raise
 
     def _fetch_one_central(self, query: str, parameters: tuple = ()):
-        with self.write_controller.connection_guard(self.conn):
-            cursor = self.conn.cursor()
-            cursor.execute(query, parameters)
-            return cursor.fetchone()
+        try:
+            with self.write_controller.connection_guard(self.conn):
+                cursor = self.conn.cursor()
+                cursor.execute(query, parameters)
+                return cursor.fetchone()
+        except Exception as exc:
+            if is_database_unavailable_error(exc):
+                raise notify_database_unavailable(exc, context="journal_read_one", logger=self.logger) from exc
+            raise
 
     def _fetch_all(self, query: str, parameters: tuple = ()):
         if self.conn and self.conn.in_transaction:
@@ -511,13 +526,18 @@ class DBManager:
 
     def _connect_db(self):
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self.conn = sqlite3.connect(
-            self.db_path,
-            check_same_thread=False,
-            isolation_level=None,
-            timeout=5.0,
-        )
-        configure_connection(self.conn)
+        try:
+            self.conn = sqlite3.connect(
+                self.db_path,
+                check_same_thread=False,
+                isolation_level=None,
+                timeout=5.0,
+            )
+            configure_connection(self.conn)
+        except Exception as exc:
+            if is_database_unavailable_error(exc):
+                raise notify_database_unavailable(exc, context="journal_init", logger=self.logger) from exc
+            raise
 
     def _reconnect(self):
         if self.conn:
@@ -772,11 +792,13 @@ class DBManager:
             if self.conn and not self.conn.in_transaction:
                 self._maybe_create_periodic_backup(source=source)
                 self._after_write_committed()
-        except (sqlite3.OperationalError, sqlite3.ProgrammingError, sqlite3.DatabaseError) as exc:
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError, sqlite3.DatabaseError, OSError) as exc:
+            if is_database_unavailable_error(exc):
+                raise notify_database_unavailable(exc, context=f"journal_transaction:{source}", logger=self.logger) from exc
             op_id = None
             if is_corruption_write_error(exc):
                 self.logger.critical("Central SQLite DB corruption detected during journal transaction (source=%s): %s", source, exc)
-            if outer_transaction and statement_sink:
+            if DEFERRED_WRITE_FALLBACK_ENABLED and outer_transaction and statement_sink:
                 op_id = self._enqueue_outbox_fallback(statement_sink, source=source, exc=exc)
             if op_id:
                 return
@@ -789,7 +811,9 @@ class DBManager:
                 self._maybe_create_periodic_backup(source=source)
                 self._after_write_committed()
             return cursor
-        except (sqlite3.OperationalError, sqlite3.ProgrammingError, sqlite3.DatabaseError) as exc:
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError, sqlite3.DatabaseError, OSError) as exc:
+            if is_database_unavailable_error(exc):
+                raise notify_database_unavailable(exc, context=f"journal_write:{source}", logger=self.logger) from exc
             if is_corruption_write_error(exc):
                 self.logger.critical("Central SQLite DB corruption detected during journal write (source=%s): %s", source, exc)
             if is_retryable_write_error(exc):
@@ -802,7 +826,9 @@ class DBManager:
                     return cursor
                 except Exception:
                     pass
-            op_id = self._enqueue_outbox_fallback([(query, tuple(parameters or ()))], source=source, exc=exc)
+            op_id = None
+            if DEFERRED_WRITE_FALLBACK_ENABLED:
+                op_id = self._enqueue_outbox_fallback([(query, tuple(parameters or ()))], source=source, exc=exc)
             if op_id:
                 return DeferredWriteCursor(op_id=op_id)
             raise

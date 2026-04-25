@@ -1,16 +1,16 @@
 import os
 import sys
 
+from rem_card.app.runtime_paths import (
+    get_local_logs_dir,
+    get_project_root,
+    is_compiled as _runtime_is_compiled,
+    resolve_baza_dir,
+)
+
 def is_compiled() -> bool:
     """Проверяет, запущено ли приложение в скомпилированном виде (PyInstaller/Nuitka)."""
-    if getattr(sys, 'frozen', False):
-        return True
-    if "__compiled__" in globals():
-        return True
-    exe_name = os.path.basename(sys.executable).lower()
-    if exe_name not in ('python.exe', 'pythonw.exe'):
-        return True
-    return False
+    return _runtime_is_compiled()
 
 def get_resources_dir() -> str:
     """
@@ -44,21 +44,15 @@ def get_resources_dir() -> str:
     
 def get_base_dir() -> str:
     """
-    Определяет корневую сетевую папку (Project) в зависимости от того,
-    как запущена программа (скомпилирована или из исходников).
+    Определяет корень данных.
+
+    В dev-режиме это C:\\Project. В compiled-режиме это выбранная
+    пользователем папка Baza_rao3_jurnal из Prog\\remcard_data_path.json.
     """
     if is_compiled():
-        exe_dir = os.path.dirname(sys.executable)
-        if hasattr(sys, '_MEIPASS'):
-            # PyInstaller: Baza_rao3_jurnal/Prog/app.exe (поднимаемся на 2 уровня к Project)
-            return os.path.abspath(os.path.join(exe_dir, "..", ".."))
-        else:
-            # Nuitka: Baza_rao3_jurnal/Prog/launcher.dist/launcher.exe (поднимаемся на 3 уровня к Project)
-            return os.path.abspath(os.path.join(exe_dir, "..", "..", ".."))
+        return resolve_baza_dir()
     else:
-        # исходники: rem_card/app/paths.py -> app -> rem_card -> Project
-        # os.path.dirname(__file__) == C:\Project\rem_card\app
-        return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        return get_project_root()
 
 def get_seed_dir() -> str:
     if is_compiled():
@@ -82,12 +76,16 @@ def get_user_dict_dir() -> str:
     return get_seed_dir()
 
 NETWORK_ROOT = get_base_dir()
-if os.path.basename(NETWORK_ROOT) == "Baza_rao3_jurnal":
+_BAZA_DIR_OVERRIDE = os.environ.get("REMCARD_BAZA_DIR")
+if _BAZA_DIR_OVERRIDE:
+    BAZA_DIR = os.path.abspath(os.path.normpath(_BAZA_DIR_OVERRIDE.strip().strip('"')))
+elif os.path.basename(NETWORK_ROOT) == "Baza_rao3_jurnal":
     BAZA_DIR = NETWORK_ROOT
 else:
     BAZA_DIR = os.path.join(NETWORK_ROOT, "Baza_rao3_jurnal")
 
-LOGS_DIR = os.path.join(BAZA_DIR, "logs")
+BAZA_LOGS_DIR = os.path.join(BAZA_DIR, "logs")
+LOGS_DIR = get_local_logs_dir()
 ARCHIV_DIR = os.path.join(BAZA_DIR, "archiv")
 REM_CARD_DIR = os.path.join(BAZA_DIR, "rem_card")
 REPORT_DIR = os.path.join(BAZA_DIR, "report")
@@ -126,16 +124,27 @@ def get_role_lock_path(role: str) -> str:
 
 # Убедимся, что папки существуют
 def ensure_directories():
-    os.makedirs(BAZA_DIR, exist_ok=True)
+    allow_shared_create = (not is_compiled()) or os.environ.get("REMCARD_PATH_SETUP_MODE") == "1"
+    shared_dirs = [
+        BAZA_DIR,
+        BAZA_LOGS_DIR,
+        ARCHIV_DIR,
+        REM_CARD_DIR,
+        REPORT_DIR,
+        BACKUPS_RC_DIR,
+        CORRUPTED_DB_DIR,
+        BACKUP_HEALTH_DIR,
+        BACKUP_VALIDATION_REPORTS_DIR,
+        INVALID_BACKUPS_DIR,
+        ROLE_LOCKS_DIR,
+        DB_CYCLE_ARCHIVE_DIR,
+    ]
+
+    for directory in shared_dirs:
+        if allow_shared_create:
+            os.makedirs(directory, exist_ok=True)
+        elif not os.path.isdir(directory):
+            raise FileNotFoundError(f"Required shared directory is unavailable: {directory}")
+
     os.makedirs(LOGS_DIR, exist_ok=True)
-    os.makedirs(ARCHIV_DIR, exist_ok=True)
-    os.makedirs(REM_CARD_DIR, exist_ok=True)
-    os.makedirs(REPORT_DIR, exist_ok=True)
-    os.makedirs(BACKUPS_RC_DIR, exist_ok=True)
-    os.makedirs(CORRUPTED_DB_DIR, exist_ok=True)
-    os.makedirs(BACKUP_HEALTH_DIR, exist_ok=True)
-    os.makedirs(BACKUP_VALIDATION_REPORTS_DIR, exist_ok=True)
-    os.makedirs(INVALID_BACKUPS_DIR, exist_ok=True)
-    os.makedirs(ROLE_LOCKS_DIR, exist_ok=True)
-    os.makedirs(DB_CYCLE_ARCHIVE_DIR, exist_ok=True)
     os.makedirs(LOCAL_CACHE_DIR, exist_ok=True)

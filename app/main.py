@@ -5,12 +5,131 @@ import socket
 import sys
 from typing import Optional
 
+from rem_card.app.runtime_paths import (
+    BAZA_DIR_NAME,
+    DataPathConfigurationError,
+    cleanup_old_local_logs,
+    create_baza_structure_and_db,
+    get_local_logs_dir,
+    is_compiled,
+    validate_baza_dir_for_runtime,
+    write_configured_baza_dir,
+)
+
 
 def _show_native_warning(title: str, message: str):
     try:
         ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)
     except Exception:
         print(f"{title}: {message}")
+
+
+def _write_startup_local_log(message: str):
+    try:
+        log_dir = get_local_logs_dir()
+        os.makedirs(log_dir, exist_ok=True)
+        cleanup_old_local_logs(log_dir)
+        path = os.path.join(log_dir, "startup.log")
+        from datetime import datetime
+
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"{datetime.now().isoformat(timespec='seconds')} | {message}\n")
+    except Exception:
+        pass
+
+
+def _show_custom_warning(title: str, message: str):
+    try:
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        try:
+            from rem_card.ui.styles.theme import GLOBAL_STYLE
+
+            app.setStyleSheet(GLOBAL_STYLE)
+        except Exception:
+            pass
+        from rem_card.ui.shared.custom_message_box import CustomMessageBox
+
+        CustomMessageBox.warning(None, title, message)
+    except Exception:
+        _show_native_warning(title, message)
+
+
+def _show_custom_info(title: str, message: str):
+    try:
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        try:
+            from rem_card.ui.styles.theme import GLOBAL_STYLE
+
+            app.setStyleSheet(GLOBAL_STYLE)
+        except Exception:
+            pass
+        from rem_card.ui.shared.custom_message_box import CustomMessageBox
+
+        CustomMessageBox.information(None, title, message)
+    except Exception:
+        print(f"{title}: {message}")
+
+
+def _run_path_setup():
+    os.environ["REMCARD_PATH_SETUP_MODE"] = "1"
+
+    from PySide6.QtWidgets import QApplication, QFileDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    try:
+        from rem_card.ui.styles.theme import GLOBAL_STYLE
+
+        app.setStyleSheet(GLOBAL_STYLE)
+    except Exception:
+        pass
+
+    while True:
+        selected = QFileDialog.getExistingDirectory(
+            None,
+            f"Выберите папку {BAZA_DIR_NAME}",
+            os.path.expanduser("~"),
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if not selected:
+            return 0
+
+        ok, message = create_baza_structure_and_db(selected)
+        if not ok:
+            _show_custom_warning("Путь не сохранен", message)
+            continue
+
+        try:
+            config_path = write_configured_baza_dir(selected)
+        except Exception as exc:
+            _show_custom_warning("Путь не сохранен", str(exc))
+            continue
+
+        _show_custom_info(
+            "Путь сохранен",
+            f"Путь к {BAZA_DIR_NAME} сохранен.\n\n{selected}\n\nФайл настроек:\n{config_path}",
+        )
+        return 0
+
+
+def _validate_compiled_role_startup(role: Optional[str]) -> bool:
+    if not is_compiled() or role not in ("doctor", "nurse"):
+        return True
+
+    ok, message = validate_baza_dir_for_runtime()
+    if ok:
+        return True
+
+    full_message = (
+        f"{message}\n\n"
+        "Запустите RemCardPathSetup.exe и выберите сетевую папку Baza_rao3_jurnal."
+    )
+    _write_startup_local_log(f"startup blocked for role={role}: {full_message}")
+    _show_custom_warning("База данных недоступна", full_message)
+    return False
 
 
 def _acquire_initial_role_lock(role: Optional[str]):
@@ -62,9 +181,9 @@ def _shutdown_window_resources(window, logger):
             logger.warning("DB manager close failed: %s", exc)
 
 
-def main():
+def main(forced_role: Optional[str] = None, path_setup: bool = False):
     try:
-        _main_impl()
+        _main_impl(forced_role=forced_role, path_setup=path_setup)
     except Exception:
         import traceback
 
@@ -77,10 +196,20 @@ def main():
         sys.exit(1)
 
 
-def _main_impl():
+def _main_impl(forced_role: Optional[str] = None, path_setup: bool = False):
     parser = argparse.ArgumentParser(description="РЕМКАРТА v2.0")
     parser.add_argument("--role", choices=["doctor", "nurse"], help="Начальная роль пользователя")
+    parser.add_argument("--path-setup", action="store_true", help="Настроить путь к Baza_rao3_jurnal")
     args, _unknown = parser.parse_known_args()
+    if forced_role:
+        args.role = forced_role
+    path_setup = bool(path_setup or args.path_setup)
+
+    if path_setup:
+        sys.exit(_run_path_setup())
+
+    if not _validate_compiled_role_startup(args.role):
+        sys.exit(1)
 
     from PySide6.QtNetwork import QLocalSocket, QLocalServer
     from PySide6.QtWidgets import QApplication, QSplashScreen
@@ -170,6 +299,14 @@ def _main_impl():
             logger.critical("Critical error during startup/runtime: %s", exc, exc_info=True)
         else:
             print(f"Critical startup error: {exc}")
+        try:
+            from rem_card.app.db_availability import is_database_unavailable_error
+
+            if is_database_unavailable_error(exc) or isinstance(exc, (DataPathConfigurationError, FileNotFoundError, OSError)):
+                _write_startup_local_log(f"startup/runtime blocked: {exc}")
+                _show_custom_warning("База данных недоступна", str(exc))
+        except Exception:
+            pass
         exit_code = 1
     finally:
         if window and logger:

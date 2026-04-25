@@ -93,8 +93,9 @@ def perform_daily_backup_and_cleanup():
         cutoff_7_days = now - timedelta(days=7)
         _cleanup_old_files(REPORT_DIR, "*", cutoff_7_days, "report")
 
-        # 5) Cleanup old logs (> 1 week)
-        _cleanup_old_files(LOGS_DIR, "*.log", cutoff_7_days, "log")
+        # 5) Cleanup old local runtime logs (> 30 days)
+        cutoff_30_days = now - timedelta(days=30)
+        _cleanup_old_files(LOGS_DIR, "*.log", cutoff_30_days, "local log")
 
         if prune_stats and prune_stats.get("deleted_rows", 0) > 0:
             logger.info(
