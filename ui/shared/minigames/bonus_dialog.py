@@ -5,7 +5,7 @@ from typing import Dict, Optional
 from PySide6.QtCore import QPoint, QSettings, Qt
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
-from rem_card.services.minigames.minigame_score_store import MinigameScoreStore
+from rem_card.services.minigames.minigame_score_store import ARCADE_GAME_LABELS, MinigameScoreStore
 from rem_card.services.minigames.minigame_user_store import MinigameUserStore, normalize_role
 from rem_card.services.minigames.tamagotchi_service import TamagotchiService
 from rem_card.ui.shared.base_dialog import BaseStyledDialog
@@ -28,6 +28,8 @@ class BonusDialog(BaseStyledDialog):
         self.snake_page = None
         self.tamagotchi_widget = None
         self.tamagotchi_page = None
+        self.arcade_widget = None
+        self.arcade_page = None
 
         self.resize(520, 330)
         self._build_ui()
@@ -56,6 +58,8 @@ class BonusDialog(BaseStyledDialog):
         self.game_page.tamagotchi_requested.connect(self._open_tamagotchi)
         self.game_page.leaderboard_requested.connect(self._open_leaderboard)
         self.game_page.tamagotchi_leaderboard_requested.connect(self._open_tamagotchi_leaderboard)
+        self.game_page.arcade_requested.connect(self._open_arcade_game)
+        self.game_page.arcade_leaderboard_requested.connect(self._open_arcade_leaderboard)
         self.game_page.back_requested.connect(self._show_user_select)
 
         self.stack.addWidget(self.user_page)
@@ -110,6 +114,12 @@ class BonusDialog(BaseStyledDialog):
         from rem_card.ui.shared.minigames.tamagotchi_leaderboard_dialog import TamagotchiLeaderboardDialog
 
         dialog = TamagotchiLeaderboardDialog(self.tamagotchi_service, self)
+        dialog.exec()
+
+    def _open_arcade_leaderboard(self, game_key: str) -> None:
+        from rem_card.ui.shared.minigames.arcade_leaderboard_dialog import ArcadeLeaderboardDialog
+
+        dialog = ArcadeLeaderboardDialog(self.score_store, game_key, self)
         dialog.exec()
 
     def _open_snake(self) -> None:
@@ -199,6 +209,54 @@ class BonusDialog(BaseStyledDialog):
         self.resize(620, 720)
         self.tamagotchi_widget.setFocus(Qt.OtherFocusReason)
 
+    def _open_arcade_game(self, game_key: str) -> None:
+        if not self.current_user:
+            CustomMessageBox.warning(self, "Бонус", "Сначала выберите пользователя.")
+            return
+
+        from rem_card.ui.shared.minigames.arcade_widgets import arcade_game_size, create_arcade_game_widget
+
+        clean_key = str(game_key or "").strip().lower()
+        self._stop_active_game()
+        arcade_page = QWidget()
+        page_layout = QVBoxLayout(arcade_page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(8)
+
+        top_row = QHBoxLayout()
+        user_label = QLabel(str(self.current_user.get("full_name") or ""))
+        user_label.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        title_label = QLabel(ARCADE_GAME_LABELS.get(clean_key, clean_key))
+        title_label.setStyleSheet("font-weight: bold; color: #6c757d;")
+        back_btn = QPushButton("К минииграм")
+        back_btn.clicked.connect(self._show_games)
+        top_row.addWidget(user_label)
+        top_row.addSpacing(12)
+        top_row.addWidget(title_label)
+        top_row.addStretch()
+        top_row.addWidget(back_btn)
+
+        self.arcade_widget = create_arcade_game_widget(
+            clean_key,
+            parent=arcade_page,
+            on_finished=lambda score, result, duration, extra=None, key=clean_key: self._save_arcade_result(
+                key, score, result, duration, extra
+            ),
+        )
+        self.arcade_page = arcade_page
+
+        page_layout.addLayout(top_row)
+        page_layout.addWidget(self.arcade_widget, 0, Qt.AlignCenter)
+
+        self.stack.addWidget(arcade_page)
+        self.stack.setCurrentWidget(arcade_page)
+        width, height = arcade_game_size(clean_key)
+        self.resize(width, height)
+        start_new_game = getattr(self.arcade_widget, "start_new_game", None)
+        if callable(start_new_game):
+            start_new_game()
+        self.arcade_widget.setFocus(Qt.OtherFocusReason)
+
     def _confirm_reset_tamagotchi(self) -> None:
         if not self.tamagotchi_widget:
             return
@@ -237,9 +295,34 @@ class BonusDialog(BaseStyledDialog):
         if self.snake_widget:
             self.snake_widget.set_save_status("Результат сохранён")
 
+    def _save_arcade_result(
+        self,
+        game_key: str,
+        score: int,
+        result: str,
+        duration: float,
+        extra: Optional[Dict] = None,
+    ) -> None:
+        if not self.current_user:
+            return
+        try:
+            user = self.score_store.save_arcade_result(
+                str(self.current_user["user_id"]),
+                game_key,
+                score=int(score or 0),
+                result=str(result or "game_over"),
+                duration_sec=float(duration or 0),
+                extra=extra if isinstance(extra, dict) else {},
+            )
+        except Exception as exc:
+            CustomMessageBox.warning(self, "Бонус", f"Не удалось сохранить результат:\n{exc}")
+            return
+        self.current_user = user
+
     def _stop_active_game(self) -> None:
         self._stop_snake()
         self._stop_tamagotchi()
+        self._stop_arcade()
 
     def _stop_snake(self) -> None:
         if self.snake_widget is not None:
@@ -270,6 +353,23 @@ class BonusDialog(BaseStyledDialog):
             except Exception:
                 pass
             self.tamagotchi_page = None
+
+    def _stop_arcade(self) -> None:
+        if self.arcade_widget is not None:
+            try:
+                stop_game = getattr(self.arcade_widget, "stop_game", None)
+                if callable(stop_game):
+                    stop_game()
+            except Exception:
+                pass
+            self.arcade_widget = None
+        if self.arcade_page is not None:
+            try:
+                self.stack.removeWidget(self.arcade_page)
+                self.arcade_page.deleteLater()
+            except Exception:
+                pass
+            self.arcade_page = None
 
     def _settings(self) -> QSettings:
         return QSettings("MyHospital", "RemCard")

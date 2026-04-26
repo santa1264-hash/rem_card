@@ -9,6 +9,8 @@ class GameSelectPage(QWidget):
     tamagotchi_requested = Signal()
     leaderboard_requested = Signal()
     tamagotchi_leaderboard_requested = Signal()
+    arcade_requested = Signal(str)
+    arcade_leaderboard_requested = Signal(str)
     back_requested = Signal()
 
     def __init__(self, parent=None):
@@ -26,26 +28,44 @@ class GameSelectPage(QWidget):
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
 
-        snake_name = QLabel("1. Змейка")
-        snake_name.setStyleSheet("font-weight: bold; color: #2c3e50;")
-        snake_load_btn = QPushButton("Загрузить")
-        snake_leaders_btn = QPushButton("Лидеры")
-        snake_load_btn.clicked.connect(self.snake_requested.emit)
-        snake_leaders_btn.clicked.connect(self.leaderboard_requested.emit)
-
-        tamagotchi_name = QLabel("2. Тамагочи")
-        tamagotchi_name.setStyleSheet("font-weight: bold; color: #2c3e50;")
-        tamagotchi_load_btn = QPushButton("Загрузить")
-        tamagotchi_leaders_btn = QPushButton("Лидеры")
-        tamagotchi_load_btn.clicked.connect(self.tamagotchi_requested.emit)
-        tamagotchi_leaders_btn.clicked.connect(self.tamagotchi_leaderboard_requested.emit)
-
-        grid.addWidget(snake_name, 0, 0)
-        grid.addWidget(snake_load_btn, 0, 1)
-        grid.addWidget(snake_leaders_btn, 0, 2)
-        grid.addWidget(tamagotchi_name, 1, 0)
-        grid.addWidget(tamagotchi_load_btn, 1, 1)
-        grid.addWidget(tamagotchi_leaders_btn, 1, 2)
+        games = [
+            ("1. Змейка", lambda checked=False: self.snake_requested.emit(), lambda checked=False: self.leaderboard_requested.emit()),
+            (
+                "2. Тамагочи",
+                lambda checked=False: self.tamagotchi_requested.emit(),
+                lambda checked=False: self.tamagotchi_leaderboard_requested.emit(),
+            ),
+            (
+                "3. Dodge",
+                lambda checked=False: self.arcade_requested.emit("dodge"),
+                lambda checked=False: self.arcade_leaderboard_requested.emit("dodge"),
+            ),
+            (
+                "4. Тетрис",
+                lambda checked=False: self.arcade_requested.emit("tetris"),
+                lambda checked=False: self.arcade_leaderboard_requested.emit("tetris"),
+            ),
+            (
+                "5. Сапёр",
+                lambda checked=False: self.arcade_requested.emit("minesweeper"),
+                lambda checked=False: self.arcade_leaderboard_requested.emit("minesweeper"),
+            ),
+            (
+                "6. 2048",
+                lambda checked=False: self.arcade_requested.emit("game_2048"),
+                lambda checked=False: self.arcade_leaderboard_requested.emit("game_2048"),
+            ),
+        ]
+        for row, (title, load_handler, leaderboard_handler) in enumerate(games):
+            name = QLabel(title)
+            name.setStyleSheet("font-weight: bold; color: #2c3e50;")
+            load_btn = QPushButton("Загрузить")
+            leaders_btn = QPushButton("Лидеры")
+            load_btn.clicked.connect(load_handler)
+            leaders_btn.clicked.connect(leaderboard_handler)
+            grid.addWidget(name, row, 0)
+            grid.addWidget(load_btn, row, 1)
+            grid.addWidget(leaders_btn, row, 2)
 
         back_btn = QPushButton("Назад")
         back_btn.clicked.connect(self.back_requested.emit)
