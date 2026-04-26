@@ -57,19 +57,13 @@ def get_base_dir() -> str:
 
 def get_seed_dir() -> str:
     if is_compiled():
-        if hasattr(sys, '_MEIPASS'):
-            return os.path.join(sys._MEIPASS, "rem_card", "data", "dictionaries")
-        else:
-            return os.path.join(os.path.dirname(sys.executable), "rem_card", "data", "dictionaries")
+        return os.path.join(get_resources_dir(), "rem_card", "data", "dictionaries")
     else:
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "dictionaries"))
 
 def get_icon_dir() -> str:
     if is_compiled():
-        if hasattr(sys, '_MEIPASS'):
-            return os.path.join(sys._MEIPASS, "rem_card", "icon")
-        else:
-            return os.path.join(os.path.dirname(sys.executable), "rem_card", "icon")
+        return os.path.join(get_resources_dir(), "rem_card", "icon")
     else:
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "icon"))
 

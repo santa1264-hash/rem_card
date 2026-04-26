@@ -4,7 +4,7 @@ import tempfile
 from datetime import datetime
 from typing import Any, List, Optional
 
-from rem_card.app.paths import USER_DICT_DIR
+from rem_card.app.paths import SEED_DIR
 from rem_card.data.dao.diet_dao import DietPlanDAO, OralIntakeDAO
 from rem_card.data.dao.exceptions import OptimisticLockError
 from rem_card.data.dto.remcard_dto import DietPlanDTO, DietTemplateDTO, OralIntakeEventDTO
@@ -93,7 +93,7 @@ def _as_bool_int(value: Any) -> int:
 
 class DietTemplateFileStore:
     def __init__(self, path: Optional[str] = None):
-        self.path = path or os.path.join(USER_DICT_DIR, DIET_TEMPLATES_FILE_NAME)
+        self.path = path or os.path.join(SEED_DIR, DIET_TEMPLATES_FILE_NAME)
 
     def exists(self) -> bool:
         return os.path.exists(self.path)
