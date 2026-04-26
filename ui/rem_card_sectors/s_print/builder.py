@@ -10,6 +10,7 @@ from .prescriptions import render_prescriptions
 from .balance import render_balance
 from .events import render_events
 from .ventilation import render_ventilation
+from .death_outcome import render_death_outcome
 
 class ReportBuilder:
     HORIZONTAL_MARGIN_MM = 7
@@ -273,6 +274,14 @@ class ReportBuilder:
             .vent-mode { width: 16%; }
             .vent-params { width: 24%; text-align: left; }
             .vent-indications { width: 24%; text-align: left; }
+
+            .death-section,
+            table.death-table,
+            table.death-table tbody,
+            table.death-table tr {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
         </style>
         """
         return css.replace("__TABLE_WIDTH__", table_width)
@@ -285,6 +294,7 @@ class ReportBuilder:
         if config.get("balance", True): sections.append(render_balance(data, hours, table_width_pt))
         if config.get("ventilation", False): sections.append(render_ventilation(data, table_width_pt))
         if config.get("events", True): sections.append(render_events(data, table_width_pt))
+        if config.get("death_outcome", False): sections.append(render_death_outcome(data, table_width_pt))
         visible_sections = [section for section in sections if section]
         return '<div class="section-gap">&nbsp;</div>'.join(visible_sections)
 

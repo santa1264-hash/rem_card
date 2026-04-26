@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QS
 
 from rem_card.services.minigames.minigame_score_store import MinigameScoreStore
 from rem_card.services.minigames.minigame_user_store import MinigameUserStore, normalize_role
+from rem_card.services.minigames.tamagotchi_service import TamagotchiService
 from rem_card.ui.shared.base_dialog import BaseStyledDialog
 from rem_card.ui.shared.custom_message_box import CustomMessageBox
 from rem_card.ui.shared.minigames.game_select_page import GameSelectPage
@@ -21,9 +22,12 @@ class BonusDialog(BaseStyledDialog):
         self.role = normalize_role(role)
         self.user_store = MinigameUserStore(data_root_provider)
         self.score_store = MinigameScoreStore(data_root_provider, user_store=self.user_store)
+        self.tamagotchi_service = TamagotchiService(data_root_provider, user_store=self.user_store)
         self.current_user: Optional[Dict] = None
         self.snake_widget = None
         self.snake_page = None
+        self.tamagotchi_widget = None
+        self.tamagotchi_page = None
 
         self.resize(520, 330)
         self._build_ui()
@@ -32,12 +36,12 @@ class BonusDialog(BaseStyledDialog):
 
     def closeEvent(self, event) -> None:
         self._save_last_position()
-        self._stop_snake()
+        self._stop_active_game()
         super().closeEvent(event)
 
     def reject(self) -> None:
         self._save_last_position()
-        self._stop_snake()
+        self._stop_active_game()
         super().reject()
 
     def _build_ui(self) -> None:
@@ -49,7 +53,9 @@ class BonusDialog(BaseStyledDialog):
 
         self.game_page = GameSelectPage()
         self.game_page.snake_requested.connect(self._open_snake)
+        self.game_page.tamagotchi_requested.connect(self._open_tamagotchi)
         self.game_page.leaderboard_requested.connect(self._open_leaderboard)
+        self.game_page.tamagotchi_leaderboard_requested.connect(self._open_tamagotchi_leaderboard)
         self.game_page.back_requested.connect(self._show_user_select)
 
         self.stack.addWidget(self.user_page)
@@ -89,7 +95,7 @@ class BonusDialog(BaseStyledDialog):
         self.stack.setCurrentWidget(self.game_page)
 
     def _show_user_select(self) -> None:
-        self._stop_snake()
+        self._stop_active_game()
         self.resize(520, 330)
         self.stack.setCurrentWidget(self.user_page)
         self._refresh_users(str((self.current_user or {}).get("user_id") or ""))
@@ -100,6 +106,12 @@ class BonusDialog(BaseStyledDialog):
         dialog = LeaderboardDialog(self.score_store, self)
         dialog.exec()
 
+    def _open_tamagotchi_leaderboard(self) -> None:
+        from rem_card.ui.shared.minigames.tamagotchi_leaderboard_dialog import TamagotchiLeaderboardDialog
+
+        dialog = TamagotchiLeaderboardDialog(self.tamagotchi_service, self)
+        dialog.exec()
+
     def _open_snake(self) -> None:
         if not self.current_user:
             CustomMessageBox.warning(self, "Бонус", "Сначала выберите пользователя.")
@@ -107,7 +119,7 @@ class BonusDialog(BaseStyledDialog):
 
         from rem_card.ui.shared.minigames.snake_widget import SnakeWidget
 
-        self._stop_snake()
+        self._stop_active_game()
         snake_page = QWidget()
         page_layout = QVBoxLayout(snake_page)
         page_layout.setContentsMargins(0, 0, 0, 0)
@@ -134,8 +146,74 @@ class BonusDialog(BaseStyledDialog):
         self.resize(700, 760)
         self.snake_widget.setFocus(Qt.OtherFocusReason)
 
+    def _open_tamagotchi(self) -> None:
+        if not self.current_user:
+            CustomMessageBox.warning(self, "Бонус", "Сначала выберите пользователя.")
+            return
+
+        from rem_card.ui.shared.minigames.tamagotchi_widget import TamagotchiWidget
+
+        self._stop_active_game()
+        tamagotchi_page = QWidget()
+        page_layout = QVBoxLayout(tamagotchi_page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(8)
+
+        top_row = QHBoxLayout()
+        user_label = QLabel(str(self.current_user.get("full_name") or ""))
+        user_label.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        reset_btn = QPushButton("Перезапуск")
+        reset_btn.setMinimumWidth(110)
+        reset_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #7f8c8d;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                padding: 6px 12px;
+            }
+            QPushButton:hover { background-color: #6c757d; }
+            """
+        )
+        reset_btn.clicked.connect(self._confirm_reset_tamagotchi)
+        back_btn = QPushButton("К минииграм")
+        back_btn.clicked.connect(self._show_games)
+        top_row.addWidget(user_label)
+        top_row.addStretch()
+        top_row.addWidget(reset_btn)
+        top_row.addWidget(back_btn)
+
+        self.tamagotchi_widget = TamagotchiWidget(
+            user_id=str(self.current_user["user_id"]),
+            service=self.tamagotchi_service,
+        )
+        self.tamagotchi_page = tamagotchi_page
+
+        page_layout.addLayout(top_row)
+        page_layout.addWidget(self.tamagotchi_widget, 0, Qt.AlignCenter)
+
+        self.stack.addWidget(tamagotchi_page)
+        self.stack.setCurrentWidget(tamagotchi_page)
+        self.resize(620, 720)
+        self.tamagotchi_widget.setFocus(Qt.OtherFocusReason)
+
+    def _confirm_reset_tamagotchi(self) -> None:
+        if not self.tamagotchi_widget:
+            return
+        reply = CustomMessageBox.question(
+            self,
+            "Перезапуск Тамагочи",
+            "Вы действительно хотите убить тамагочи и начать заново?",
+            CustomMessageBox.Yes | CustomMessageBox.No,
+            CustomMessageBox.No,
+        )
+        if reply == CustomMessageBox.Yes:
+            self.tamagotchi_widget.reset_pet()
+
     def _show_games(self) -> None:
-        self._stop_snake()
+        self._stop_active_game()
         self.resize(520, 300)
         self.stack.setCurrentWidget(self.game_page)
 
@@ -159,6 +237,10 @@ class BonusDialog(BaseStyledDialog):
         if self.snake_widget:
             self.snake_widget.set_save_status("Результат сохранён")
 
+    def _stop_active_game(self) -> None:
+        self._stop_snake()
+        self._stop_tamagotchi()
+
     def _stop_snake(self) -> None:
         if self.snake_widget is not None:
             try:
@@ -173,6 +255,21 @@ class BonusDialog(BaseStyledDialog):
             except Exception:
                 pass
             self.snake_page = None
+
+    def _stop_tamagotchi(self) -> None:
+        if self.tamagotchi_widget is not None:
+            try:
+                self.tamagotchi_widget.stop_game()
+            except Exception:
+                pass
+            self.tamagotchi_widget = None
+        if self.tamagotchi_page is not None:
+            try:
+                self.stack.removeWidget(self.tamagotchi_page)
+                self.tamagotchi_page.deleteLater()
+            except Exception:
+                pass
+            self.tamagotchi_page = None
 
     def _settings(self) -> QSettings:
         return QSettings("MyHospital", "RemCard")

@@ -2,9 +2,10 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, QSettings, Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFrame,
     QGridLayout,
@@ -70,7 +71,7 @@ VENTILATION_PARAMETER_ORDER = ["RR", "TV", "Pinsp", "PEEP", "FiO2", "PS", "Flow"
 
 CARDIAC_ARREST_TEMPLATES: Dict[str, List[Tuple[str, str]]] = {
     "Асистолия": [
-        ("СЛР", "Высококачественная СЛР, цикл 2 мин, минимальные паузы, смена компрессора каждые 2 мин."),
+        ("СЛР", "СЛР 100-120 в минуту, цикл 2 мин, минимальные паузы, смена компрессора каждые 2 мин."),
         ("Адреналин", "1 мг в/в как можно раньше, далее каждые 3-5 мин."),
         ("Дыхательные пути", AIRWAY_TEXT),
         ("Контроль ритма", "Оценка ритма каждые 2 мин; дефибрилляция только при переходе в ФЖ/ЖТ без пульса."),
@@ -93,7 +94,7 @@ CARDIAC_ARREST_TEMPLATES: Dict[str, List[Tuple[str, str]]] = {
         ("Дополнительно", ""),
     ],
     "Электр. диссоциация": [
-        ("СЛР", "Высококачественная СЛР, цикл 2 мин, минимальные паузы."),
+        ("СЛР", "СЛР 100-120 в минуту, цикл 2 мин, минимальные паузы."),
         ("Адреналин", "1 мг в/в как можно раньше, далее каждые 3-5 мин."),
         ("Дыхательные пути", AIRWAY_TEXT),
         ("Контроль ритма", "Оценка ритма/пульса каждые 2 мин; дефибрилляция только при переходе в ФЖ/ЖТ без пульса."),
@@ -103,12 +104,35 @@ CARDIAC_ARREST_TEMPLATES: Dict[str, List[Tuple[str, str]]] = {
 
 
 class _OutcomeDialogBase(BaseStyledDialog):
+    SETTINGS_POS_KEY = "outcome_dialog/last_pos"
+
     def __init__(self, title: str, shift_date: Optional[datetime], base_comment: str = "", parent=None):
         super().__init__(title, parent)
         self.shift_date = shift_date or datetime.now()
         self.base_comment = str(base_comment or "").strip()
         self.result_data: Dict[str, Any] = {}
         self.setModal(True)
+
+    def _restore_last_position(self) -> None:
+        value = self._settings().value(self.SETTINGS_POS_KEY)
+        if not isinstance(value, QPoint):
+            return
+        screen = QApplication.screenAt(value) or QApplication.primaryScreen()
+        if screen is not None and not screen.availableGeometry().contains(value):
+            return
+        self.move(value)
+
+    def _save_last_position(self) -> None:
+        settings = self._settings()
+        settings.setValue(self.SETTINGS_POS_KEY, self.pos())
+        settings.sync()
+
+    def _settings(self) -> QSettings:
+        return QSettings("MyHospital", "RemCard")
+
+    def done(self, result: int) -> None:
+        self._save_last_position()
+        super().done(result)
 
     def _apply_content_style(self):
         self.content_widget.setStyleSheet(
@@ -319,6 +343,7 @@ class TransferOutcomeDialog(_OutcomeDialogBase):
         self.content_layout.addLayout(columns)
         self.content_layout.addLayout(self._buttons())
         self._sync_lpu_visibility()
+        self._restore_last_position()
 
     def _sync_lpu_visibility(self):
         is_other_department = self.department_combo.currentText() == "Другое ЛПУ"
@@ -438,7 +463,8 @@ class DeathOutcomeDialog(_OutcomeDialogBase):
         self.cause_combo.setMaximumWidth(FORM_FIELD_MAX_WIDTH)
         self.cause_combo.currentIndexChanged.connect(self._rebuild_measures)
 
-        self.comment_edit = self._comment_line()
+        self.comment_edit = QLineEdit()
+        self.comment_edit.setPlaceholderText("Комментарий к причине остановки сердца")
         self.comment_edit.setMaximumWidth(FORM_FIELD_MAX_WIDTH)
         self.comment_edit.textEdited.connect(self._on_comment_edited)
 
@@ -460,6 +486,7 @@ class DeathOutcomeDialog(_OutcomeDialogBase):
         self.content_layout.addWidget(scroll, 1)
         self.content_layout.addLayout(self._buttons())
         self._update_auto_comment()
+        self._restore_last_position()
 
     def _rebuild_measures(self):
         while self.measures_layout.count() > 1:
@@ -646,17 +673,9 @@ class DeathOutcomeDialog(_OutcomeDialogBase):
             "comment": comment,
         }
 
-        reason = (
-            f"Биологическая смерть: {biological_dt.strftime('%d.%m.%Y %H:%M')}; "
-            f"клиническая смерть: {clinical_dt.strftime('%d.%m.%Y %H:%M')}; "
-            f"причина остановки сердца: {cause}"
-        )
-        if comment:
-            reason += f". Комментарий: {comment}"
-
         self.result_data = {
             "event_time": biological_dt,
-            "reason_text": reason,
+            "reason_text": self.base_comment,
             "admission_details": {
                 "death_datetime": biological_dt,
                 "clinical_death_datetime": clinical_dt,

@@ -22,6 +22,7 @@ class AdminMainWidget(QWidget):
         self.diet_templates_widget = None
         self.admin_types_widget = None
         self.print_widget = None
+        self.print_dialog = None
 
         self.setup_ui()
 
@@ -162,15 +163,14 @@ class AdminMainWidget(QWidget):
             self.diet_templates_widget.set_service(self.service)
         return self.diet_templates_widget
 
-    def _ensure_print_widget(self):
-        if self.print_widget is None:
-            from .print_settings_widget import PrintSettingsWidget
+    def _ensure_print_dialog(self):
+        if self.print_dialog is None:
+            from .print_settings_widget import PrintSettingsDialog
 
-            self.print_widget = self._connect_back(PrintSettingsWidget())
-            self.stack.addWidget(self.print_widget)
+            self.print_dialog = PrintSettingsDialog(parent=self)
             if self._pending_print_context is not None:
-                self.print_widget.set_context(*self._pending_print_context)
-        return self.print_widget
+                self.print_dialog.set_context(*self._pending_print_context)
+        return self.print_dialog
 
     def open_drugs(self):
         self._show_page(self._ensure_drugs_widget())
@@ -194,7 +194,13 @@ class AdminMainWidget(QWidget):
         self._show_page(self._ensure_diet_templates_widget())
 
     def open_print(self):
-        self._show_page(self._ensure_print_widget())
+        dialog = self._ensure_print_dialog()
+        if self._pending_print_context is not None:
+            dialog.set_context(*self._pending_print_context)
+        dialog.load_settings()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def set_print_context(self, service, admission_id, date):
         self.service = service
@@ -203,6 +209,8 @@ class AdminMainWidget(QWidget):
             self.diet_templates_widget.set_service(service)
         if self.print_widget is not None:
             self.print_widget.set_context(service, admission_id, date)
+        if self.print_dialog is not None:
+            self.print_dialog.set_context(service, admission_id, date)
 
     def show_menu(self):
         self.stack.setCurrentWidget(self.menu_widget)

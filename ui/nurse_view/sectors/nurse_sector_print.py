@@ -17,6 +17,15 @@ from rem_card.ui.shared.custom_message_box import CustomMessageBox
 from rem_card.services.balance_calculator import BalanceCalculator
 from rem_card.services.report_vitals_slotting import select_latest_vitals_by_report_hour
 from rem_card.data.dto.remcard_dto import AdministrationDTO
+from rem_card.ui.rem_card_sectors.s_print.death_outcome import build_death_outcome_struct
+
+
+def _movement_comment_text(status_value, reason_text):
+    text = str(reason_text or "").strip()
+    if str(status_value) == "DEAD" and text.startswith("Биологическая смерть:"):
+        return ""
+    return text
+
 
 class NursePrintConfig:
     def __init__(self):
@@ -202,9 +211,15 @@ class DataCollectorWorker(QThread):
             events_struct.append({
                 "time": time_str,
                 "status": status_map.get(status_val, status_val),
-                "desc": getattr(ev, "reason_text", None) or "—"
+                "desc": _movement_comment_text(status_val, getattr(ev, "reason_text", None)) or "—"
             })
         data["events_struct"] = events_struct
+        data["death_outcome"] = build_death_outcome_struct(
+            remcard_service,
+            data.get("admission_id") or data.get("id"),
+            start_dt,
+            end_dt,
+        )
         return data
 
     def run(self):

@@ -57,27 +57,43 @@ def _extract_fault_payload(content: str) -> str:
         return ""
     return "\n".join(payload_lines[-40:])
 
+
+def _archive_fault_log(fault_log_path: str, content: str) -> str:
+    archive_name = f"faults_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.getpid()}.log"
+    archive_path = os.path.join(os.path.dirname(fault_log_path), archive_name)
+    with open(archive_path, "w", encoding="utf-8") as archive_file:
+        archive_file.write(content)
+    return archive_path
+
+
 def init_crash_handler():
     """Инициализация расширенного перехватчика фатальных сбоев (C++ и Python)."""
     ensure_directories()
         
     fault_log_path = os.path.join(LOGS_DIR, "faults.log")
+    reset_fault_log = True
     
     # 1. Проверяем, были ли сбои в прошлом сеансе
     if os.path.exists(fault_log_path) and os.path.getsize(fault_log_path) > 0:
+        reset_fault_log = False
         try:
             with open(fault_log_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 payload = _extract_fault_payload(content)
                 if payload:
-                    logger.warning(f"!!! FOUND PREVIOUS CRASH LOG (check faults.log) !!!\nLast state:\n{payload[-500:]}")
-        except Exception:
-            pass
+                    archive_path = _archive_fault_log(fault_log_path, content)
+                    logger.warning(
+                        "!!! FOUND PREVIOUS CRASH LOG (archived to %s) !!!\nLast state:\n%s",
+                        archive_path,
+                        payload[-500:],
+                    )
+                reset_fault_log = True
+        except Exception as exc:
+            logger.warning("Failed to inspect previous crash log %s: %s", fault_log_path, exc)
             
     # 2. Настраиваем faulthandler (запись низкоуровневых ошибок Qt/C++)
     try:
-        # Открываем файл в режиме добавления с принудительным сбросом буфера
-        fault_file = open(fault_log_path, "a", encoding="utf-8")
+        fault_file = open(fault_log_path, "w" if reset_fault_log else "a", encoding="utf-8")
         # Записываем разделитель сеанса
         fault_file.write(f"\n--- SESSION START: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
         fault_file.flush()

@@ -3,11 +3,19 @@ from rem_card.ui.shared.custom_message_box import CustomMessageBox
 from datetime import datetime
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QScrollArea, QFrame, QLineEdit, QComboBox, QMessageBox, QDateTimeEdit, QApplication, QDialog)
-from PySide6.QtCore import Qt, Signal, QDateTime
+from PySide6.QtCore import Qt, Signal, QDateTime, QTimer
 from PySide6.QtGui import QColor, QIcon
 from rem_card.ui.shared.base_sector import BaseSectorWidget
 from rem_card.data.dto.remcard_dto import PatientStatus
 from rem_card.ui.rem_card_sectors.outcome_dialogs import DeathOutcomeDialog, TransferOutcomeDialog
+
+
+def _movement_comment_text(status, reason_text):
+    text = str(reason_text or "").strip()
+    status_value = getattr(status, "value", status)
+    if str(status_value) == PatientStatus.DEAD.value and text.startswith("Биологическая смерть:"):
+        return ""
+    return text
 
 class SectorEvents(BaseSectorWidget):
     status_changed = Signal()
@@ -22,6 +30,8 @@ class SectorEvents(BaseSectorWidget):
         self.user_id = "USER" 
         self.role = "Врач" # По умолчанию
         self._is_editing_time = False # Флаг для блокировки автообновления при редактировании
+        self._post_status_refresh_pending = False
+        self._post_status_emit_pending = False
 
         self.label.hide()
         self.setFrameStyle(BaseSectorWidget.NoFrame)
@@ -244,7 +254,7 @@ class SectorEvents(BaseSectorWidget):
             l.setContentsMargins(10, 5, 10, 5)
             
             # Поле комментария и флаг редактирования (общие для всех типов строк)
-            reason_edit = QLineEdit(ev.reason_text or "")
+            reason_edit = QLineEdit(_movement_comment_text(ev.status, ev.reason_text))
             reason_edit.setPlaceholderText("Комментарий...")
             reason_edit.setStyleSheet("border: 1px solid #dcdde1; border-radius: 2px; padding: 1px 5px;")
             
@@ -457,6 +467,29 @@ class SectorEvents(BaseSectorWidget):
             self._update_buttons_state(None, is_archive)
             self.btn_rollback.setEnabled(False)
 
+    def _schedule_post_status_refresh(self, *, emit_status_changed: bool = True, delay_ms: int = 150):
+        if emit_status_changed:
+            self._post_status_emit_pending = True
+        if self._post_status_refresh_pending:
+            return
+
+        self._post_status_refresh_pending = True
+
+        def apply_refresh():
+            self._post_status_refresh_pending = False
+            should_emit = self._post_status_emit_pending
+            self._post_status_emit_pending = False
+            if not self.admission_id or not self.status_service:
+                return
+            try:
+                self.refresh(force=True)
+                if should_emit:
+                    self.status_changed.emit()
+            except RuntimeError:
+                return
+
+        QTimer.singleShot(delay_ms, apply_refresh)
+
     def _update_buttons_state(self, current_status, is_archive=False):
         self.btn_active.setChecked(current_status == PatientStatus.ACTIVE)
         self.btn_out.setChecked(current_status == PatientStatus.OUT)
@@ -486,9 +519,9 @@ class SectorEvents(BaseSectorWidget):
                 self.content_area.setEnabled(True)
                 if result:
                     self.edit_reason_text.clear()
-                    self.refresh(force=True)
-                    self.status_changed.emit()
+                    self._schedule_post_status_refresh()
                 else:
+                    self._schedule_post_status_refresh(emit_status_changed=False)
                     CustomMessageBox.warning(self, "Ошибка", "Не удалось изменить статус пациента.")
 
             def on_error(exc):
@@ -533,17 +566,18 @@ class SectorEvents(BaseSectorWidget):
 
         payload = dict(dialog.result_data or {})
         event_time = payload.get("event_time")
-        reason_text = payload.get("reason_text") or base_comment
+        reason_text = payload.get("reason_text")
+        if reason_text is None:
+            reason_text = base_comment
         admission_details = payload.get("admission_details") or {}
 
         def on_success(result):
             self.content_area.setEnabled(True)
             if result:
                 self.edit_reason_text.clear()
-                self.refresh(force=True)
-                self.status_changed.emit()
+                self._schedule_post_status_refresh()
             else:
-                self.refresh(force=True)
+                self._schedule_post_status_refresh(emit_status_changed=False)
                 CustomMessageBox.warning(
                     self,
                     "Ошибка",

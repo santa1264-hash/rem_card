@@ -17,6 +17,15 @@ from rem_card.ui.shared.custom_message_box import CustomMessageBox
 from rem_card.services.balance_calculator import BalanceCalculator
 from rem_card.services.report_vitals_slotting import select_latest_vitals_by_report_hour
 from rem_card.data.dto.remcard_dto import AdministrationDTO
+from rem_card.ui.rem_card_sectors.s_print.death_outcome import build_death_outcome_struct
+
+
+def _movement_comment_text(status_value, reason_text):
+    text = str(reason_text or "").strip()
+    if str(status_value) == "DEAD" and text.startswith("Биологическая смерть:"):
+        return ""
+    return text
+
 
 class PrintConfig:
     def __init__(self):
@@ -24,7 +33,9 @@ class PrintConfig:
         self.version = "1.0"
         
     def save(self, vitals: bool, balance: bool, prescriptions: bool, events: bool, 
-             ventilation: bool, labs: bool, procedures: bool):
+             ventilation: bool, labs: bool, procedures: bool, death_outcome: bool = None):
+        if death_outcome is None:
+            death_outcome = self.load().get("death_outcome", False)
         self.settings.setValue("sector_print/version", self.version)
         self.settings.setValue("sector_print/sections/vitals", vitals)
         self.settings.setValue("sector_print/sections/balance", balance)
@@ -33,6 +44,8 @@ class PrintConfig:
         self.settings.setValue("sector_print/sections/ventilation", ventilation)
         self.settings.setValue("sector_print/sections/labs", labs)
         self.settings.setValue("sector_print/sections/procedures", procedures)
+        self.settings.setValue("sector_print/sections/death_outcome", death_outcome)
+        self.settings.sync()
         
     def load(self):
         return {
@@ -42,7 +55,8 @@ class PrintConfig:
             "events": self.settings.value("sector_print/sections/events", True, type=bool),
             "ventilation": self.settings.value("sector_print/sections/ventilation", False, type=bool),
             "labs": self.settings.value("sector_print/sections/labs", False, type=bool),
-            "procedures": self.settings.value("sector_print/sections/procedures", False, type=bool)
+            "procedures": self.settings.value("sector_print/sections/procedures", False, type=bool),
+            "death_outcome": self.settings.value("sector_print/sections/death_outcome", False, type=bool),
         }
 
 class FullReportWorker(QThread):
@@ -361,7 +375,7 @@ class DataCollectorWorker(QThread):
             status_val = str(getattr(ev.status, 'value', ev.status))
             st_time = getattr(ev, 'start_time', None)
             en_time = getattr(ev, 'end_time', None)
-            desc = getattr(ev, "reason_text", None) or "—"
+            desc = _movement_comment_text(status_val, getattr(ev, "reason_text", None)) or "—"
             
             time_str = st_time.strftime("%d.%m.%Y %H:%M") if st_time else ""
             if en_time:
@@ -375,6 +389,15 @@ class DataCollectorWorker(QThread):
                 "desc": desc
             })
         data["events_struct"] = events_struct
+        if config.get("death_outcome", False):
+            data["death_outcome"] = build_death_outcome_struct(
+                remcard_service,
+                data.get("admission_id") or data.get("id"),
+                start_dt,
+                end_dt,
+            )
+        else:
+            data["death_outcome"] = {}
 
         # 5. ИВЛ
         data["ventilation_struct"] = DataCollectorWorker.build_ventilation_struct(
