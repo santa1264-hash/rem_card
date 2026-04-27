@@ -421,6 +421,18 @@
       "priority_level": 3,
       "offset_min": 0,
       "color": "#bdc3c7"
+    },
+    "metabolic": {
+      "name_ru": "Метаболические",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
+    },
+    "a-adrenoblok": {
+      "name_ru": "A-Адреноблокаторы",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
     }
   },
   "drugs": {
@@ -2306,6 +2318,55 @@
       "concentration_mg_ml": 20.0,
       "default_dilution": null,
       "group": "narcotic_analgesics"
+    },
+    "mildronat": {
+      "latin": "Mildronati",
+      "aliases": [
+        "мильдоний",
+        "милдронат"
+      ],
+      "star_alias": "милд*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 500.0,
+      "forms": [
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 100.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "metabolic"
+    },
+    "Urapidil": {
+      "latin": "Urapidili",
+      "aliases": [
+        "урапилил",
+        "тахибен",
+        "эбрантил"
+      ],
+      "star_alias": "урап*",
+      "admin_type": "infusion",
+      "uses_line": false,
+      "duration_min": 30,
+      "default_dose": 25.0,
+      "forms": [
+        5.0
+      ],
+      "unit": "mg",
+      "form_unit": "ml",
+      "form_key": "solution_iv",
+      "concentration_mg_ml": 5.0,
+      "default_dilution": {
+        "base": "nacl_09",
+        "volume": 250
+      },
+      "group": "a-adrenoblok"
     }
   },
   "admin_types": {
