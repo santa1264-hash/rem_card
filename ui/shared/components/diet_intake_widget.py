@@ -408,13 +408,36 @@ class DietIntakeWidget(QWidget):
             self.template_combo.clear()
             placeholder = "Выбрать питание..." if self.role == "doctor" else "Питание не выбрано"
             self.template_combo.addItem(placeholder, None)
-            current_template_id = self._draft_template_id
+            current_template_id = self._current_template_id()
             selected_index = 0
             for template in self._templates:
                 self.template_combo.addItem(template.name, int(template.id))
-                if current_template_id and int(template.id) == int(current_template_id):
+                if current_template_id is not None and int(template.id) == int(current_template_id):
                     selected_index = self.template_combo.count() - 1
             self.template_combo.setCurrentIndex(selected_index)
+
+    def _current_template_id(self) -> Optional[int]:
+        if self._draft_template_id is not None:
+            return int(self._draft_template_id)
+
+        plan_template_id = getattr(self._plan, "template_id", None)
+        if plan_template_id is not None:
+            try:
+                template_id = int(plan_template_id)
+            except (TypeError, ValueError):
+                template_id = None
+            if template_id is not None and template_id in self._templates_by_id:
+                return template_id
+
+        if not self._plan:
+            return None
+
+        plan_items = schedule_items(getattr(self._plan, "schedule_json", "[]"))
+        plan_diet_text = str(getattr(self._plan, "diet_text", "") or "")
+        for template in self._templates:
+            if schedule_items(template.schedule_json) == plan_items and str(template.diet_text or "") == plan_diet_text:
+                return int(template.id)
+        return None
 
     def _current_plan_items(self) -> list[dict]:
         if self._draft_items is not None:
@@ -525,7 +548,7 @@ class DietIntakeWidget(QWidget):
                 self.shift_date,
                 diet_text,
                 items,
-                template_id=None,
+                template_id=self._current_template_id(),
                 expected_version=expected_version,
             )
 

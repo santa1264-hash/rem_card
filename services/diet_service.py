@@ -4,7 +4,7 @@ import tempfile
 from datetime import datetime
 from typing import Any, List, Optional
 
-from rem_card.app.paths import SEED_DIR
+from rem_card.app.paths import SEED_DIR, USER_DICT_DIR
 from rem_card.data.dao.diet_dao import DietPlanDAO, OralIntakeDAO
 from rem_card.data.dao.exceptions import OptimisticLockError
 from rem_card.data.dto.remcard_dto import DietPlanDTO, DietTemplateDTO, OralIntakeEventDTO
@@ -92,8 +92,11 @@ def _as_bool_int(value: Any) -> int:
 
 
 class DietTemplateFileStore:
-    def __init__(self, path: Optional[str] = None):
-        self.path = path or os.path.join(SEED_DIR, DIET_TEMPLATES_FILE_NAME)
+    def __init__(self, path: Optional[str] = None, seed_path: Optional[str] = None):
+        self.path = path or os.path.join(USER_DICT_DIR, DIET_TEMPLATES_FILE_NAME)
+        self.seed_path = seed_path
+        if self.seed_path is None and path is None:
+            self.seed_path = os.path.join(SEED_DIR, DIET_TEMPLATES_FILE_NAME)
 
     def exists(self) -> bool:
         return os.path.exists(self.path)
@@ -128,6 +131,20 @@ class DietTemplateFileStore:
                 pass
             raise
 
+    def initialize_from_seed(self):
+        if self.exists():
+            self.list_templates()
+            return
+
+        templates: List[DietTemplateDTO] = []
+        next_id = 1
+        if self.seed_path and os.path.abspath(self.seed_path) != os.path.abspath(self.path) and os.path.exists(self.seed_path):
+            payload = self._read_payload(self.seed_path)
+            templates = self._templates_from_payload(payload)
+            next_id = self.next_id(payload, templates)
+
+        self.save_templates(templates, next_id=next_id)
+
     def next_id(self, payload: dict[str, Any], templates: List[DietTemplateDTO]) -> int:
         max_id = max((int(t.id or 0) for t in templates), default=0)
         try:
@@ -136,19 +153,20 @@ class DietTemplateFileStore:
             configured_next = 0
         return max(1, max_id + 1, configured_next)
 
-    def _read_payload(self) -> dict[str, Any]:
-        if not os.path.exists(self.path):
+    def _read_payload(self, path: Optional[str] = None) -> dict[str, Any]:
+        source_path = path or self.path
+        if not os.path.exists(source_path):
             return {"next_id": 1, "templates": []}
         try:
-            with open(self.path, "r", encoding="utf-8") as fh:
+            with open(source_path, "r", encoding="utf-8") as fh:
                 payload = json.load(fh)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Файл шаблонов питания поврежден: {self.path} ({exc})") from exc
+            raise ValueError(f"Файл шаблонов питания поврежден: {source_path} ({exc})") from exc
 
         if isinstance(payload, list):
             return {"templates": payload}
         if not isinstance(payload, dict):
-            raise ValueError(f"Файл шаблонов питания должен быть JSON-объектом: {self.path}")
+            raise ValueError(f"Файл шаблонов питания должен быть JSON-объектом: {source_path}")
         return payload
 
     def _templates_from_payload(self, payload: dict[str, Any]) -> List[DietTemplateDTO]:
@@ -317,11 +335,7 @@ class DietTemplateService:
         return normalized
 
     def _ensure_file_initialized(self):
-        if self.file_store.exists():
-            self.file_store.list_templates()
-            return
-
-        self.file_store.save_templates([], next_id=1)
+        self.file_store.initialize_from_seed()
 
     def _find_template(self, template_id: int) -> Optional[DietTemplateDTO]:
         templates = self.list_templates()
@@ -355,15 +369,18 @@ class DietPlanService:
         expected_version: Optional[int] = None,
     ):
         template = self.template_service.get_template(template_id)
+        stored_template_id = int(template.id or template_id)
         dto = DietPlanDTO(
             admission_id=int(admission_id),
             shift_start=self.shift_start_for_date(shift_date),
-            template_id=None,
+            template_id=stored_template_id,
             diet_text=template.diet_text,
             schedule_json=template.schedule_json,
             last_modified_by="doctor",
         )
-        return self.dao.upsert_plan(dto, expected_version=expected_version)
+        with self.dao.db.remcard_transaction(source="diet_plan_apply_template") as cur:
+            self._sync_template_row_for_fk(cur, template)
+            return self.dao.upsert_plan(dto, expected_version=expected_version, cursor=cur)
 
     def upsert_plan(
         self,
@@ -374,21 +391,86 @@ class DietPlanService:
         template_id: Optional[int] = None,
         expected_version: Optional[int] = None,
     ):
+        template = None
+        stored_template_id = None
+        if template_id is not None:
+            template = self.template_service.get_template(int(template_id))
+            stored_template_id = int(template.id or template_id)
+
         dto = DietPlanDTO(
             admission_id=int(admission_id),
             shift_start=self.shift_start_for_date(shift_date),
-            template_id=None,
+            template_id=stored_template_id,
             diet_text=str(diet_text or ""),
             schedule_json=normalize_schedule(schedule_json),
             last_modified_by="doctor",
         )
-        return self.dao.upsert_plan(dto, expected_version=expected_version)
+        if template is None:
+            return self.dao.upsert_plan(dto, expected_version=expected_version)
+
+        with self.dao.db.remcard_transaction(source="diet_plan_upsert") as cur:
+            self._sync_template_row_for_fk(cur, template)
+            return self.dao.upsert_plan(dto, expected_version=expected_version, cursor=cur)
 
     def delete_plan(self, admission_id: int, shift_date: datetime, expected_version: Optional[int] = None):
         self.dao.delete_plan(
             int(admission_id),
             self.shift_start_for_date(shift_date),
             expected_version=expected_version,
+        )
+
+    @staticmethod
+    def _sync_template_row_for_fk(cursor, template: DietTemplateDTO):
+        template_id = int(template.id or 0)
+        if template_id <= 0:
+            return
+
+        version = int(template.version or 1)
+        now = _now_text()
+        cursor.execute("SELECT id FROM diet_templates WHERE id = ?", (template_id,))
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                UPDATE diet_templates
+                SET name = ?,
+                    diet_text = ?,
+                    schedule_json = ?,
+                    is_default = ?,
+                    version = ?,
+                    last_modified_by = ?,
+                    updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'now')
+                WHERE id = ?
+                """,
+                (
+                    template.name,
+                    template.diet_text,
+                    template.schedule_json,
+                    int(template.is_default or 0),
+                    version,
+                    template.last_modified_by or "doctor",
+                    template_id,
+                ),
+            )
+            return
+
+        cursor.execute(
+            """
+            INSERT INTO diet_templates (
+                id, name, diet_text, schedule_json, is_default, version,
+                created_at, updated_at, last_modified_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, STRFTIME('%Y-%m-%d %H:%M:%f', 'now'), ?)
+            """,
+            (
+                template_id,
+                template.name,
+                template.diet_text,
+                template.schedule_json,
+                int(template.is_default or 0),
+                version,
+                template.created_at or now,
+                template.last_modified_by or "doctor",
+            ),
         )
 
 
