@@ -194,7 +194,7 @@ class BalanceCalculator:
                 return
             cls._engine_last_reload_mono = now_mono
             try:
-                engine.reload()
+                engine.reload_if_changed()
             except Exception:
                 pass
 

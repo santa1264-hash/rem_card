@@ -1,153 +1,216 @@
 import json
 import os
 import re
+import tempfile
+import threading
 from typing import Dict, Any, Tuple, List, Optional
 from datetime import datetime, timedelta
 from rem_card.app.paths import SEED_DIR, USER_DICT_DIR
 
 class PrescriptionEngine:
+    _DATASETS = (
+        ("drugs", "drugs"),
+        ("groups", "groups"),
+        ("dilutions", "diluents"),
+        ("templates", "templates"),
+        ("forms", "forms"),
+        ("admin_types", "admin_types"),
+    )
+
     def __init__(self):
         # Храним данные в памяти
+        self._lock = threading.RLock()
+        self._last_loaded_signature = None
         self.drugs = {}
         self.groups = {}
         self.dilutions = {}
         self.templates = {}
-        self.reload()
+        self.forms = {}
+        self.admin_types = {}
+        self.reload(force=True)
 
-    def reload(self):
+    def reload(self, *, force: bool = True) -> bool:
         """Перезагрузка всех данных (сначала seed, потом накатываем overrides)"""
-        self.drugs = self._load_merged("drugs")
-        self.groups = self._load_merged("groups")
-        self.dilutions = self._load_merged("diluents")
-        self.templates = self._load_merged("templates")
-        self.forms = self._load_merged("forms")
-        self.admin_types = self._load_merged("admin_types")
+        with self._lock:
+            return self._reload_locked(force=force)
+
+    def reload_if_changed(self) -> bool:
+        """Перезагружает справочники только если seed/override файлы изменились."""
+        return self.reload(force=False)
+
+    def _reload_locked(self, *, force: bool) -> bool:
+        signature = self._current_signature()
+        if not force and signature == self._last_loaded_signature:
+            return False
+
+        loaded = self._load_all()
+        for attr_name, _dict_name in self._DATASETS:
+            setattr(self, attr_name, loaded.get(attr_name, {}))
+        self._last_loaded_signature = self._current_signature()
+        return True
+
+    def _current_signature(self):
+        paths = [os.path.join(SEED_DIR, f"{dict_name}.seed.json") for _attr, dict_name in self._DATASETS]
+        paths.append(os.path.join(USER_DICT_DIR, "user_overrides.json"))
+        result = []
+        for path in paths:
+            try:
+                stat = os.stat(path)
+                result.append((path, int(stat.st_mtime_ns), int(stat.st_size)))
+            except OSError:
+                result.append((path, None, None))
+        return tuple(result)
+
+    def _load_json_dict(self, path: str) -> Dict[str, Any]:
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _load_all(self) -> Dict[str, Dict[str, Any]]:
+        overrides_path = os.path.join(USER_DICT_DIR, "user_overrides.json")
+        overrides_data = self._load_json_dict(overrides_path)
+        loaded: Dict[str, Dict[str, Any]] = {}
+
+        for attr_name, dict_name in self._DATASETS:
+            seed_path = os.path.join(SEED_DIR, f"{dict_name}.seed.json")
+            data = self._load_json_dict(seed_path)
+            overrides = overrides_data.get(dict_name, {})
+            if isinstance(overrides, dict):
+                for k, v in overrides.items():
+                    if isinstance(v, dict) and v.get("_deleted"):
+                        data.pop(k, None)
+                    else:
+                        data[k] = v
+            loaded[attr_name] = data
+
+        return loaded
 
     def _load_merged(self, name: str) -> Dict[str, Any]:
         """Загружает seed файл и обновляет его данными из user_overrides.json (upsert + delete)"""
-        seed_path = os.path.join(SEED_DIR, f"{name}.seed.json")
-        overrides_path = os.path.join(USER_DICT_DIR, "user_overrides.json")
-        
-        data = {}
-        if os.path.exists(seed_path):
-            with open(seed_path, 'r', encoding='utf-8') as f:
-                try:
-                    data = json.load(f)
-                except json.JSONDecodeError:
-                    pass
-        
-        if os.path.exists(overrides_path):
-            with open(overrides_path, 'r', encoding='utf-8') as f:
-                try:
-                    overrides_data = json.load(f)
-                    if name in overrides_data:
-                        # Обновляем только те ключи, что есть в overrides
-                        for k, v in overrides_data[name].items():
-                            if isinstance(v, dict) and v.get("_deleted"):
-                                if k in data:
-                                    del data[k]
-                            else:
-                                data[k] = v
-                except json.JSONDecodeError:
-                    pass
-                    
-        return data
+        with self._lock:
+            seed_path = os.path.join(SEED_DIR, f"{name}.seed.json")
+            overrides_path = os.path.join(USER_DICT_DIR, "user_overrides.json")
+            data = self._load_json_dict(seed_path)
+            overrides_data = self._load_json_dict(overrides_path)
+            overrides = overrides_data.get(name, {})
+            if isinstance(overrides, dict):
+                for k, v in overrides.items():
+                    if isinstance(v, dict) and v.get("_deleted"):
+                        data.pop(k, None)
+                    else:
+                        data[k] = v
+            return data
 
     def _save_override(self, name: str, key: str, data: Dict[str, Any]):
         """Сохраняет правки в единый файл user_overrides.json"""
+        with self._lock:
+            self._save_override_locked(name, key, data)
+
+    def _save_override_locked(self, name: str, key: str, data: Dict[str, Any]):
         overrides_path = os.path.join(USER_DICT_DIR, "user_overrides.json")
         os.makedirs(USER_DICT_DIR, exist_ok=True)
-        
-        overrides_data = {}
-        if os.path.exists(overrides_path):
-            with open(overrides_path, 'r', encoding='utf-8') as f:
-                try:
-                    overrides_data = json.load(f)
-                except json.JSONDecodeError:
-                    pass
+
+        overrides_data = self._load_json_dict(overrides_path)
                     
-        if name not in overrides_data:
+        if not isinstance(overrides_data.get(name), dict):
             overrides_data[name] = {}
             
         overrides_data[name][key] = data
-        
-        with open(overrides_path, 'w', encoding='utf-8') as f:
-            json.dump(overrides_data, f, ensure_ascii=False, indent=2)
+        self._write_json_atomic(overrides_path, overrides_data)
+        self._last_loaded_signature = None
 
     def _delete_override(self, name: str, key: str):
         """
         Помечает элемент как удаленный в user_overrides.json.
         Если элемент был в seed-файле, он перестанет отображаться.
         """
+        with self._lock:
+            self._delete_override_locked(name, key)
+
+    def _delete_override_locked(self, name: str, key: str):
         overrides_path = os.path.join(USER_DICT_DIR, "user_overrides.json")
         os.makedirs(USER_DICT_DIR, exist_ok=True)
-        
-        overrides_data = {}
-        if os.path.exists(overrides_path):
-            with open(overrides_path, 'r', encoding='utf-8') as f:
-                try:
-                    overrides_data = json.load(f)
-                except json.JSONDecodeError:
-                    pass
+
+        overrides_data = self._load_json_dict(overrides_path)
                     
-        if name not in overrides_data:
+        if not isinstance(overrides_data.get(name), dict):
             overrides_data[name] = {}
             
         # Добавляем метку удаления
         overrides_data[name][key] = {"_deleted": True}
-        
-        with open(overrides_path, 'w', encoding='utf-8') as f:
-            json.dump(overrides_data, f, ensure_ascii=False, indent=2)
+        self._write_json_atomic(overrides_path, overrides_data)
+        self._last_loaded_signature = None
+
+    def _write_json_atomic(self, path: str, payload: Dict[str, Any]):
+        directory = os.path.dirname(path) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(prefix=".user_overrides_", suffix=".json", dir=directory)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    def _save_and_update(self, attr_name: str, dict_name: str, key: str, data: Dict[str, Any]):
+        with self._lock:
+            self._save_override_locked(dict_name, key, data)
+            current = dict(getattr(self, attr_name, {}) or {})
+            current[key] = data
+            setattr(self, attr_name, current)
+
+    def _delete_and_reload(self, dict_name: str, key: str):
+        with self._lock:
+            self._delete_override_locked(dict_name, key)
+            self._reload_locked(force=True)
 
     # --- CRUD operations for Admin Panel ---
     
     def save_custom_drug(self, key: str, data: Dict[str, Any]):
-        self._save_override("drugs", key, data)
-        self.drugs[key] = data
+        self._save_and_update("drugs", "drugs", key, data)
         
     def delete_custom_drug(self, key: str):
-        self._delete_override("drugs", key)
-        self.reload()
+        self._delete_and_reload("drugs", key)
 
     def save_custom_group(self, key: str, data: Dict[str, Any]):
-        self._save_override("groups", key, data)
-        self.groups[key] = data
+        self._save_and_update("groups", "groups", key, data)
 
     def delete_custom_group(self, key: str):
-        self._delete_override("groups", key)
-        self.reload()
+        self._delete_and_reload("groups", key)
 
     def save_custom_dilution(self, key: str, data: Dict[str, Any]):
-        self._save_override("diluents", key, data)
-        self.dilutions[key] = data
+        self._save_and_update("dilutions", "diluents", key, data)
         
     def delete_custom_dilution(self, key: str):
-        self._delete_override("diluents", key)
-        self.reload()
+        self._delete_and_reload("diluents", key)
         
     def save_custom_template(self, key: str, data: Dict[str, Any]):
-        self._save_override("templates", key, data)
-        self.templates[key] = data
+        self._save_and_update("templates", "templates", key, data)
         
     def delete_custom_template(self, key: str):
-        self._delete_override("templates", key)
-        self.reload()
+        self._delete_and_reload("templates", key)
 
     def save_custom_form(self, key: str, data: Dict[str, Any]):
-        self._save_override("forms", key, data)
-        self.forms[key] = data
+        self._save_and_update("forms", "forms", key, data)
         
     def delete_custom_form(self, key: str):
-        self._delete_override("forms", key)
-        self.reload()
+        self._delete_and_reload("forms", key)
 
     def save_custom_admin_type(self, key: str, data: Dict[str, Any]):
-        self._save_override("admin_types", key, data)
-        self.admin_types[key] = data
+        self._save_and_update("admin_types", "admin_types", key, data)
         
     def delete_custom_admin_type(self, key: str):
-        self._delete_override("admin_types", key)
-        self.reload()
+        self._delete_and_reload("admin_types", key)
 
     # --- Core Search Logic ---
 
