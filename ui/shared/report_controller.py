@@ -7,6 +7,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 
 from rem_card.app.paths import REPORT_DIR
+from rem_card.app.logger import logger
 from rem_card.ui.shared.custom_message_box import CustomMessageBox
 
 
@@ -22,8 +23,23 @@ class RemCardReportController:
         self.daily_worker = None
         self.full_worker = None
 
+    @staticmethod
+    def _pdf_patient_name(raw_name: str) -> str:
+        result = str(raw_name or "patient").strip() or "patient"
+        for char in '<>:"\\|?*/':
+            result = result.replace(char, "_")
+        return result.replace(" ", "_")
+
+    @staticmethod
+    def _open_pdf(pdf_path: pathlib.Path):
+        if pdf_path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(pdf_path)))
+
     def run_daily_report(self, admission_id: int, shift_date: datetime):
         if not admission_id or not self.service:
+            return
+        if self.daily_worker is not None and self.daily_worker.isRunning():
+            CustomMessageBox.information(self.parent, "Инфо", "Отчет за сутки уже формируется.")
             return
 
         from ..rem_card_sectors.sector_print import DataCollectorWorker, PrintConfig
@@ -34,17 +50,43 @@ class RemCardReportController:
             self.daily_worker = DataCollectorWorker(self.service, admission_id, shift_date, cfg)
 
             def on_finished(data):
-                if not data:
-                    return
-                report_dir = pathlib.Path(REPORT_DIR)
-                report_dir.mkdir(parents=True, exist_ok=True)
-                patient_name = data["patient_name"].replace(" ", "_").replace("/", "_")
-                pdf_path = report_dir / f"{patient_name}_{data['start_dt'].strftime('%Y-%m-%d')}_day{data['icu_day']}.pdf"
-                ReportBuilder.build_pdf(data, cfg, pdf_path)
-                if pdf_path.exists():
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(pdf_path)))
+                try:
+                    if not data:
+                        return
+                    report_dir = pathlib.Path(REPORT_DIR)
+                    report_dir.mkdir(parents=True, exist_ok=True)
+                    patient_name = self._pdf_patient_name(data["patient_name"])
+                    pdf_path = report_dir / f"{patient_name}_{data['start_dt'].strftime('%Y-%m-%d')}_day{data['icu_day']}.pdf"
+                    logger.info(
+                        "[ReportController] building daily PDF admission_id=%s path=%s",
+                        admission_id,
+                        pdf_path,
+                    )
+                    ReportBuilder.build_pdf(data, cfg, pdf_path)
+                    logger.info(
+                        "[ReportController] daily PDF ready admission_id=%s size=%s path=%s",
+                        admission_id,
+                        pdf_path.stat().st_size,
+                        pdf_path,
+                    )
+                    self._open_pdf(pdf_path)
+                except Exception as exc:
+                    logger.exception(
+                        "[ReportController] daily PDF failed admission_id=%s",
+                        admission_id,
+                    )
+                    CustomMessageBox.critical(
+                        self.parent,
+                        "Ошибка",
+                        f"Не удалось сформировать PDF отчета за сутки:\n{exc}",
+                    )
 
             def on_error(msg):
+                logger.error(
+                    "[ReportController] daily data collection failed admission_id=%s: %s",
+                    admission_id,
+                    msg,
+                )
                 CustomMessageBox.critical(
                     self.parent,
                     "Ошибка",
@@ -64,6 +106,9 @@ class RemCardReportController:
     def run_full_report(self, admission_id: int):
         if not admission_id or not self.service:
             return
+        if self.full_worker is not None and self.full_worker.isRunning():
+            CustomMessageBox.information(self.parent, "Инфо", "Общий отчет уже формируется.")
+            return
 
         from ..rem_card_sectors.sector_print import FullReportWorker, PrintConfig
         from ..rem_card_sectors.s_print.builder import ReportBuilder
@@ -82,17 +127,44 @@ class RemCardReportController:
             self.full_worker = FullReportWorker(self.service, admission_id, dates, cfg)
 
             def on_finished(results):
-                if not results:
-                    return
-                report_dir = pathlib.Path(REPORT_DIR)
-                report_dir.mkdir(parents=True, exist_ok=True)
-                patient_name = results[0]["patient_name"].replace(" ", "_").replace("/", "_")
-                pdf_path = report_dir / f"FULL_CARD_{patient_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
-                ReportBuilder.build_pdf(results, cfg, pdf_path)
-                if pdf_path.exists():
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(pdf_path)))
+                try:
+                    if not results:
+                        return
+                    report_dir = pathlib.Path(REPORT_DIR)
+                    report_dir.mkdir(parents=True, exist_ok=True)
+                    patient_name = self._pdf_patient_name(results[0]["patient_name"])
+                    pdf_path = report_dir / f"FULL_CARD_{patient_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+                    logger.info(
+                        "[ReportController] building full PDF admission_id=%s days=%s path=%s",
+                        admission_id,
+                        len(results),
+                        pdf_path,
+                    )
+                    ReportBuilder.build_pdf(results, cfg, pdf_path)
+                    logger.info(
+                        "[ReportController] full PDF ready admission_id=%s size=%s path=%s",
+                        admission_id,
+                        pdf_path.stat().st_size,
+                        pdf_path,
+                    )
+                    self._open_pdf(pdf_path)
+                except Exception as exc:
+                    logger.exception(
+                        "[ReportController] full PDF failed admission_id=%s",
+                        admission_id,
+                    )
+                    CustomMessageBox.critical(
+                        self.parent,
+                        "Ошибка",
+                        f"Не удалось сформировать PDF общего отчета:\n{exc}",
+                    )
 
             def on_error(msg):
+                logger.error(
+                    "[ReportController] full data collection failed admission_id=%s: %s",
+                    admission_id,
+                    msg,
+                )
                 CustomMessageBox.critical(
                     self.parent,
                     "Ошибка",

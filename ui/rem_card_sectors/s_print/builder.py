@@ -1,7 +1,6 @@
-import os
 import pathlib
-from PySide6.QtGui import QTextDocument, QPageSize, QPageLayout
-from PySide6.QtPrintSupport import QPrinter
+
+from PySide6.QtGui import QTextDocument, QPageSize, QPageLayout, QPdfWriter
 from PySide6.QtCore import QMarginsF
 
 from .header import render_header
@@ -19,9 +18,9 @@ class ReportBuilder:
 
     @staticmethod
     def build_pdf(data, config, output_path):
-        printer = QPrinter(QPrinter.HighResolution)
-        printer.setOutputFormat(QPrinter.PdfFormat)
-        printer.setOutputFileName(str(output_path))
+        output_path = pathlib.Path(output_path)
+        writer = QPdfWriter(str(output_path))
+        writer.setResolution(300)
 
         layout = QPageLayout(
             QPageSize(QPageSize.A4),
@@ -34,7 +33,7 @@ class ReportBuilder:
             ),
             QPageLayout.Millimeter,
         )
-        printer.setPageLayout(layout)
+        writer.setPageLayout(layout)
         rect_pts = layout.paintRect(QPageLayout.Point)
         table_width_pt = max(1, int(rect_pts.width()) - ReportBuilder.TABLE_WIDTH_GUARD_PT)
 
@@ -51,7 +50,9 @@ class ReportBuilder:
         doc.setPageSize(rect_pts.size())
         doc.setHtml(html_content)
         
-        doc.print_(printer)
+        doc.print_(writer)
+        if not output_path.exists() or output_path.stat().st_size <= 0:
+            raise OSError(f"PDF file was not created: {output_path}")
 
     @staticmethod
     def _get_css(table_width_pt):
