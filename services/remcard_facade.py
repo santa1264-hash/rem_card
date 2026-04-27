@@ -396,11 +396,7 @@ class RemCardService(QObject):
             "orders": visible_orders,
             "admin_rows": admin_rows,
             "patient_context": self.get_patient_context(admission_id),
-            "has_any_draft": any(
-                getattr(order, "is_committed", 0) == 0
-                or getattr(order, "draft_sort_order", None) is not None
-                for order in all_orders if order
-            ) or any(int(row.get("is_committed", 0) or 0) == 0 for row in admin_rows),
+            "has_any_draft": self._orders.has_drafts(admission_id, shift_date=shift_date),
             "has_any_administrations": any(
                 str(row.get("status") or "") not in ("deleted", "cancelled")
                 for row in admin_rows
@@ -756,8 +752,8 @@ class RemCardService(QObject):
     def update_order_status(self, order_id: int, status: str):
         self._orders.update_order_status(order_id, status)
 
-    def has_order_drafts(self, admission_id: int) -> bool:
-        return self._orders.has_drafts(admission_id)
+    def has_order_drafts(self, admission_id: int, shift_date: Optional[datetime] = None) -> bool:
+        return self._orders.has_drafts(admission_id, shift_date=shift_date)
 
     def has_order_administrations(self, admission_id: int, shift_date: datetime, only_committed: bool = False) -> bool:
         return self._orders.has_administrations(admission_id, shift_date, only_committed=only_committed)

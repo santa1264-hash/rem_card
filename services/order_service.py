@@ -64,19 +64,50 @@ class OrderService:
         with self.dao.db.remcard_transaction():
             self.dao.update_status(order_id, status)
 
-    def has_drafts(self, admission_id: int) -> bool:
+    def has_drafts(self, admission_id: int, shift_date: Optional[datetime] = None) -> bool:
+        if shift_date is None:
+            query = """
+                SELECT EXISTS (
+                    SELECT 1 FROM orders WHERE admission_id = ? AND is_committed = 0
+                    UNION ALL
+                    SELECT 1 FROM orders WHERE admission_id = ? AND draft_sort_order IS NOT NULL
+                    UNION ALL
+                    SELECT 1 FROM administrations a
+                    JOIN orders o ON a.order_id = o.id
+                    WHERE o.admission_id = ? AND a.is_committed = 0
+                )
+            """
+            res = self.dao.db.fetch_one_remcard(query, (admission_id, admission_id, admission_id))
+            return bool(res[0]) if res else False
+
+        start, end = self._shifts.get_day_period(shift_date)
         query = """
             SELECT EXISTS (
-                SELECT 1 FROM orders WHERE admission_id = ? AND is_committed = 0
+                SELECT 1
+                FROM orders
+                WHERE admission_id = ?
+                  AND datetime >= ? AND datetime < ?
+                  AND (is_committed = 0 OR draft_sort_order IS NOT NULL)
                 UNION ALL
-                SELECT 1 FROM orders WHERE admission_id = ? AND draft_sort_order IS NOT NULL
-                UNION ALL
-                SELECT 1 FROM administrations a
+                SELECT 1
+                FROM administrations a
                 JOIN orders o ON a.order_id = o.id
-                WHERE o.admission_id = ? AND a.is_committed = 0
+                WHERE o.admission_id = ?
+                  AND a.planned_time >= ? AND a.planned_time < ?
+                  AND a.is_committed = 0
             )
         """
-        res = self.dao.db.fetch_one_remcard(query, (admission_id, admission_id, admission_id))
+        res = self.dao.db.fetch_one_remcard(
+            query,
+            (
+                admission_id,
+                start.isoformat(),
+                end.isoformat(),
+                admission_id,
+                start.isoformat(),
+                end.isoformat(),
+            ),
+        )
         return bool(res[0]) if res else False
 
     def has_administrations(self, admission_id: int, shift_date: datetime, only_committed: bool = False) -> bool:

@@ -33,7 +33,13 @@ class OrdersDAO:
                     AND (
                         (is_committed = 1 AND COALESCE(status, '') NOT IN ('deleted', 'cancelled'))
                         OR
-                        (is_committed = 0 AND EXISTS (SELECT 1 FROM administrations a WHERE a.order_id = orders.id AND a.is_committed = 1))
+                        (is_committed = 0 AND EXISTS (
+                            SELECT 1
+                            FROM administrations a
+                            WHERE a.order_id = orders.id
+                              AND a.is_committed = 1
+                              AND COALESCE(a.status, '') NOT IN ('deleted', 'cancelled')
+                        ))
                     )
                 """
             else:
@@ -53,7 +59,13 @@ class OrdersDAO:
                     AND (
                         (is_committed = 1 AND COALESCE(status, '') != 'deleted')
                         OR
-                        (is_committed = 0 AND EXISTS (SELECT 1 FROM administrations a WHERE a.order_id = orders.id AND a.is_committed = 1))
+                        (is_committed = 0 AND EXISTS (
+                            SELECT 1
+                            FROM administrations a
+                            WHERE a.order_id = orders.id
+                              AND a.is_committed = 1
+                              AND COALESCE(a.status, '') NOT IN ('deleted', 'cancelled')
+                        ))
                     )
                 """
             else:

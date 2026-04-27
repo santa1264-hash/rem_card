@@ -367,6 +367,7 @@ def _check_doctor_orders_late_model_binding(temp_root: str) -> tuple[bool, str]:
     from PySide6.QtCore import QObject, Signal
     from PySide6.QtWidgets import QApplication
 
+    from rem_card.data.dto.remcard_dto import OrderDTO, OrderStatus, OrderType
     from rem_card.ui.doctor_view.orders_widget import OrdersWidget
 
     class DummyOrdersService(QObject):
@@ -395,9 +396,112 @@ def _check_doctor_orders_late_model_binding(temp_root: str) -> tuple[bool, str]:
             return False, f"table header row count mismatch: {widget.table_view.verticalHeader().count()}"
         if widget.table_view.rowHeight(0) <= 0:
             return False, f"first row is collapsed: height={widget.table_view.rowHeight(0)}"
+
+        draft_events = []
+        widget.draftStatusChanged.connect(lambda active: draft_events.append(bool(active)))
+        order = OrderDTO(
+            id=10,
+            admission_id=1,
+            drug_key="local_delete_probe",
+            latin="Local Delete Probe",
+            type=OrderType.MEDICATION,
+            status=OrderStatus.ACTIVE,
+            is_committed=1,
+            created_at=datetime(2026, 4, 24, 9),
+        )
+        widget.model.orders = [order]
+        widget.model.admin_map = {}
+        widget.model.has_any_draft = False
+        widget._cached_has_drafts = False
+        widget._mark_local_order_row_deleted(0, order, was_committed=True)
+        if not widget.has_drafts() or not draft_events or draft_events[-1] is not True:
+            return False, "local row delete did not emit active draft state"
         return True, "ok"
     finally:
         widget.close()
+
+
+def _check_order_row_delete_without_times_marks_draft(temp_root: str) -> tuple[bool, str]:
+    from datetime import datetime
+
+    from rem_card.data.dao.db_manager import DatabaseManager
+    from rem_card.data.dao.remcard_dao import FluidsDAO, OrdersDAO, PatientDAO, VentilationDAO, VitalsDAO
+    from rem_card.data.dto.remcard_dto import OrderDTO, OrderStatus, OrderType
+    from rem_card.services.remcard_service import RemCardService
+
+    db_path = os.path.join(temp_root, "orders_no_times_delete.db")
+    manager = DatabaseManager(db_path, db_path)
+    try:
+        with manager.remcard_transaction(source="regression_seed_patient") as cursor:
+            cursor.execute("INSERT INTO patients(full_name) VALUES (?)", ("Regression Patient",))
+            patient_id = int(cursor.lastrowid)
+            cursor.execute(
+                """
+                INSERT INTO admissions(patient_id, bed_number, history_number, admission_datetime)
+                VALUES (?, ?, ?, ?)
+                """,
+                (patient_id, 1, "REG-1", "2026-04-24T08:00:00"),
+            )
+            admission_id = int(cursor.lastrowid)
+
+        service = RemCardService(
+            VitalsDAO(manager),
+            FluidsDAO(manager),
+            OrdersDAO(manager),
+            VentilationDAO(manager),
+            PatientDAO(manager),
+        )
+        shift_date = datetime(2026, 4, 24, 12, 0, 0)
+        order = OrderDTO(
+            admission_id=admission_id,
+            drug_key="regression_empty_schedule",
+            latin="Regression Empty Schedule",
+            type=OrderType.MEDICATION,
+            status=OrderStatus.ACTIVE,
+            dose_value=1.0,
+            dose_unit="mg",
+            is_per_kg=False,
+            frequency=1,
+            specific_times=[],
+            duration_min=0,
+            is_committed=0,
+            created_at=datetime(2026, 4, 24, 9, 0, 0),
+            comment="",
+            last_modified_by="doctor",
+        )
+
+        service.add_order(order)
+        if order.id is None:
+            return False, "order insert did not return id"
+        service.finalize_order_card(admission_id, shift_date=shift_date)
+
+        saved_snapshot = service.build_orders_snapshot(admission_id, shift_date, only_committed=False)
+        if len(saved_snapshot["orders"]) != 1 or saved_snapshot["has_any_draft"]:
+            return False, f"unexpected saved snapshot: orders={len(saved_snapshot['orders'])}, draft={saved_snapshot['has_any_draft']}"
+        if len(service.get_orders(admission_id, shift_date, only_committed=True)) != 1:
+            return False, "saved no-time order is not visible to committed reader"
+
+        service.soft_delete_order_row(order.id, True)
+        deleted_snapshot = service.build_orders_snapshot(admission_id, shift_date, only_committed=False)
+        if deleted_snapshot["orders"]:
+            return False, "deleted no-time order is still visible in doctor snapshot"
+        if not deleted_snapshot["has_any_draft"]:
+            return False, "deleted no-time order did not mark doctor snapshot as draft"
+        if not service.has_order_drafts(admission_id, shift_date):
+            return False, "shift-scoped draft query missed deleted no-time order"
+        if service.get_orders(admission_id, shift_date, only_committed=True):
+            return False, "deleted no-time order is still visible to committed reader before save"
+
+        service.finalize_order_card(admission_id, shift_date=shift_date)
+        if service.has_order_drafts(admission_id, shift_date):
+            return False, "draft flag remained after finalizing deleted no-time order"
+        if service.get_orders(admission_id, shift_date, only_committed=False):
+            return False, "deleted no-time order is visible to doctor after final save"
+        if service.get_orders(admission_id, shift_date, only_committed=True):
+            return False, "deleted no-time order is visible to committed reader after final save"
+        return True, "ok"
+    finally:
+        manager.close()
 
 
 def main():
@@ -414,6 +518,7 @@ def main():
         ("balance_admission_hour_visibility", _check_balance_admission_hour_visibility),
         ("orders_force_refresh_accepts_unchanged_version", _check_orders_force_refresh_accepts_unchanged_version),
         ("doctor_orders_late_model_binding", _check_doctor_orders_late_model_binding),
+        ("order_row_delete_without_times_marks_draft", _check_order_row_delete_without_times_marks_draft),
     ]
 
     result_items = []

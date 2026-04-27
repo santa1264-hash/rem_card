@@ -135,6 +135,13 @@ class OrdersWidget(QWidget):
             return bool(self._cached_has_orders)
         return False
 
+    @staticmethod
+    def _is_committed_value(value) -> bool:
+        try:
+            return bool(int(value or 0))
+        except Exception:
+            return str(value or "").strip().lower() in {"1", "true", "yes"}
+
     def check_drafts(self):
         self.draftStatusChanged.emit(self.has_drafts())
         self.administrationStatusChanged.emit(self.has_administrations())
@@ -188,6 +195,35 @@ class OrdersWidget(QWidget):
         )
         self._cached_has_drafts = True
         return changed
+
+    def _mark_local_order_row_deleted(self, row: int, order: OrderDTO, *, was_committed: bool):
+        if not self.model or row < 0 or row >= len(self.model.orders):
+            return
+
+        order_id = getattr(order, "id", None)
+        self.model.beginResetModel()
+        try:
+            self.model.orders.pop(row)
+            if order_id is not None:
+                self.model.admin_map = {
+                    key: admin
+                    for key, admin in self.model.admin_map.items()
+                    if key[0] != order_id
+                }
+            self.model._renumber_local_sort_order()
+            if was_committed:
+                self.model.has_any_draft = True
+                self._cached_has_drafts = True
+            elif hasattr(self.model, "_recompute_draft_flag"):
+                self.model._recompute_draft_flag()
+                self._cached_has_drafts = bool(self.model.has_any_draft or self._pending_reorder_order_ids)
+            self._cached_has_orders = any(
+                item and item.status != OrderStatus.DELETED
+                for item in self.model.orders
+            )
+        finally:
+            self.model.endResetModel()
+        self.check_drafts()
 
     def _mark_pending_structure_sync(self, change_id: int):
         try:
@@ -1397,11 +1433,14 @@ class OrdersWidget(QWidget):
                     if row < 0 or row >= len(self.model.orders):
                         return True
                     order = self.model.orders[row]
+                    was_committed = self._is_committed_value(getattr(order, "is_committed", 0))
+                    self._mark_local_order_row_deleted(row, order, was_committed=was_committed)
 
                     self._enqueue_write(
                         f"orders_soft_delete_row:{order.id}",
-                        operation=lambda: self.service.soft_delete_order_row(order.id, bool(order.is_committed)),
+                        operation=lambda: self.service.soft_delete_order_row(order.id, was_committed),
                         on_success=self._refresh_model,
+                        on_error=self._on_cell_write_failed,
                     )
                     return True
                 if index.column() > 0:

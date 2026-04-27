@@ -305,6 +305,13 @@ class OrdersModel(QAbstractTableModel):
         rows = self._fetch_latest_admin_rows()
         self.admin_map = self._build_admin_map(rows)
         self._recompute_draft_flag()
+        if not self.only_committed and hasattr(self.service, "has_order_drafts"):
+            try:
+                self.has_any_draft = self.has_any_draft or bool(
+                    self.service.has_order_drafts(self.admission_id, self.shift_date)
+                )
+            except Exception:
+                pass
         
         # Инициализируем last_sync_ts при полном рефреше
         if rows:
