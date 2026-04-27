@@ -29,6 +29,7 @@ class NurseMainWidget(QWidget):
         self._update_scheduled = False
         self._last_patients_sync = datetime.now() - timedelta(minutes=1)
         self._balance_widgets_bound = False
+        self._balance_quick_oral_connected = False
         self._balance_calculator_cls = None
         self._admin_signals_bound = False
         self.report_controller = None
@@ -189,10 +190,32 @@ class NurseMainWidget(QWidget):
             return None
         from rem_card.ui.shared.components.diet_intake_widget import DietIntakeWidget
 
-        self.diet_intake_widget = DietIntakeWidget(self.remcard_service, role="nurse")
+        self.diet_intake_widget = DietIntakeWidget(self.remcard_service, role="nurse", show_prn_input=False)
         self.diet_intake_widget.data_changed.connect(self._update_balance_calculations)
         self.layout_manager.sector_5.set_content(self.diet_intake_widget)
         return self.diet_intake_widget
+
+    def _configure_balance_quick_oral_input(self):
+        sector_2b_g = getattr(getattr(self, "layout_manager", None), "sector_2b_g", None)
+        if sector_2b_g is None or not hasattr(sector_2b_g, "configure_quick_oral_intake"):
+            return
+
+        admission_id = getattr(self.layout_manager, "current_admission_id", None)
+        sector_2b_g.configure_quick_oral_intake(
+            service=self.remcard_service,
+            admission_id=admission_id,
+            shift_date=self._current_date,
+            visible=bool(admission_id),
+        )
+        if not self._balance_quick_oral_connected and hasattr(sector_2b_g, "oral_intake_changed"):
+            sector_2b_g.oral_intake_changed.connect(self._on_balance_quick_oral_changed)
+            self._balance_quick_oral_connected = True
+
+    def _on_balance_quick_oral_changed(self):
+        diet_widget = self._ensure_diet_widget()
+        if diet_widget:
+            diet_widget.refresh_data()
+        self._update_balance_calculations()
 
     def _current_snapshot_context_key(
         self,
@@ -730,6 +753,7 @@ class NurseMainWidget(QWidget):
     def _ensure_balance_tab_ready(self):
         if hasattr(self.layout_manager, "ensure_balance_tab_initialized"):
             self.layout_manager.ensure_balance_tab_initialized()
+        self._configure_balance_quick_oral_input()
         if not self._bind_balance_widgets_if_ready():
             return
         if hasattr(self, "balance_controller") and self.balance_controller:
@@ -758,6 +782,7 @@ class NurseMainWidget(QWidget):
         diet_widget = self._ensure_diet_widget()
         if diet_widget and getattr(self.layout_manager, 'current_admission_id', None):
             diet_widget.set_context(self.layout_manager.current_admission_id, self._current_date)
+        self._configure_balance_quick_oral_input()
         # Держим сектор 5 в синхроне с датой открытой карты.
         if (
             hasattr(self, 'layout_manager')
@@ -804,6 +829,7 @@ class NurseMainWidget(QWidget):
         diet_widget = self._ensure_diet_widget()
         if diet_widget:
             diet_widget.set_context(admission_id, date)
+        self._configure_balance_quick_oral_input()
 
         # Обновляем orders_widget
         if hasattr(self.layout_manager, "orders_widget") and self.layout_manager.orders_widget:

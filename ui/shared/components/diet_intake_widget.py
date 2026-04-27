@@ -34,13 +34,14 @@ class NoWheelComboBox(QComboBox):
 class DietIntakeWidget(QWidget):
     data_changed = Signal()
 
-    def __init__(self, service=None, *, role: str = "doctor", parent=None):
+    def __init__(self, service=None, *, role: str = "doctor", show_prn_input: bool = True, parent=None):
         super().__init__(parent)
         self.setObjectName("diet_intake_widget")
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.service = service
         self.role = str(role or "doctor").lower()
+        self.show_prn_input = bool(show_prn_input)
         self.admission_id: Optional[int] = None
         self.shift_date: Optional[datetime] = None
         self.read_only = False
@@ -326,13 +327,14 @@ class DietIntakeWidget(QWidget):
 
         self.template_frame.setVisible(is_doctor or is_nurse)
         self.template_combo.setEnabled(can_edit_plan)
-        self.prn_frame.setVisible(is_nurse)
+        show_prn_input = is_nurse and self.show_prn_input
+        self.prn_frame.setVisible(show_prn_input)
         self.btn_add_plan_time.setVisible(can_edit_plan)
         self.btn_save.setVisible(can_edit_plan or can_edit_fact)
         self.btn_cancel.setVisible(can_edit_plan or can_edit_fact)
         if is_nurse:
             self.btn_cancel.setText("Отменить последнее")
-            self.btn_cancel.setToolTip("Отменяет последнее сохраненное изменение в секторе перорального ввода")
+            self.btn_cancel.setToolTip("")
             self.btn_cancel.setEnabled(can_edit_fact and bool(self._fact_undo_stack))
         else:
             self.btn_cancel.setText("Отмена")
@@ -341,8 +343,11 @@ class DietIntakeWidget(QWidget):
 
         if is_doctor or is_nurse:
             self._fill_templates()
-        if is_nurse:
+        if show_prn_input:
             self._reset_prn_fields()
+        else:
+            self.prn_time.clear()
+            self.prn_amount.clear()
 
         self.rows_layout.addWidget(self._header_label("Время"), 0, 0)
         self.rows_layout.addWidget(self._header_label("План"), 0, 1)
@@ -369,7 +374,12 @@ class DietIntakeWidget(QWidget):
             row_idx = self._add_event_row(row_idx, event, can_edit_fact)
 
         if row_idx == 1:
-            text = "Выберите питание или добавьте время." if is_doctor else "План не задан. Внесите питье по потребности ниже."
+            if is_doctor:
+                text = "Выберите питание или добавьте время."
+            elif show_prn_input:
+                text = "План не задан. Внесите питье по потребности ниже."
+            else:
+                text = "План не задан. Внесите питье по потребности в балансе жидкости."
             self.empty_label.setText(text)
         else:
             self.empty_label.setText("")
@@ -623,7 +633,7 @@ class DietIntakeWidget(QWidget):
                 )
 
             prn_text = self.prn_amount.text().strip()
-            if prn_text:
+            if self.show_prn_input and prn_text:
                 prn_dt = self.service.resolve_datetime(self.prn_time.text().strip(), self.shift_date)
                 prn_event = self._event_for_time(prn_dt)
                 self._add_fact_change(changes_by_key, prn_dt, float(prn_text), prn_event)

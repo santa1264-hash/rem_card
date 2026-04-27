@@ -1,10 +1,17 @@
 import os
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame)
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from datetime import datetime
+
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QLineEdit)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIntValidator, QPixmap
+
+from rem_card.services.shift_service import ShiftService
+from rem_card.ui.shared.custom_message_box import CustomMessageBox
 
 class Sector2b_g(QWidget):
     """Сектор баланса жидкости: Введено (левая часть)"""
+    oral_intake_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Определяем базовый путь к иконкам: rem_card/icon
@@ -12,6 +19,10 @@ class Sector2b_g(QWidget):
         # Путь до rem_card: 4 уровня вверх
         self.rem_card_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         self.icons_dir = os.path.join(self.rem_card_root, "icon")
+        self.quick_oral_service = None
+        self.quick_oral_admission_id = None
+        self.quick_oral_shift_date = None
+        self._quick_oral_saving = False
         
         self.init_ui()
 
@@ -64,6 +75,7 @@ class Sector2b_g(QWidget):
         self.blood_val = self.add_balance_row("Кровь", "balans_blood.png")
         self.plasma_val = self.add_balance_row("Плазма", "balans_plasma.png")
         self.oral_val = self.add_balance_row("Перорально", "diet.png")
+        self._add_quick_oral_input()
         
         self.data_layout.addStretch()
         self.main_layout_v.addWidget(self.data_area)
@@ -106,6 +118,26 @@ class Sector2b_g(QWidget):
                 border-bottom-left-radius: 5px !important;
                 border-bottom-right-radius: 5px !important;
                 margin-left: 0px !important;
+            }
+            QFrame#quick_oral_frame {
+                background: #ffffff;
+                border: 1px solid #cfd6dc;
+                border-radius: 4px;
+            }
+            QLabel#quick_oral_label {
+                border: none;
+                background: transparent;
+                color: #495057;
+                font-size: 13px;
+            }
+            QLineEdit#quick_oral_cell {
+                background: #ffffff;
+                color: #1f2933;
+                border: 1px solid #cfd6dc;
+                border-radius: 3px;
+                padding: 1px 3px;
+                min-height: 20px;
+                max-height: 22px;
             }
         """)
 
@@ -157,6 +189,125 @@ class Sector2b_g(QWidget):
         
         self.data_layout.addLayout(row_layout)
         return val_lbl
+
+    def _add_quick_oral_input(self):
+        self.quick_oral_frame = QFrame()
+        self.quick_oral_frame.setObjectName("quick_oral_frame")
+        self.quick_oral_frame.setFixedHeight(34)
+        layout = QHBoxLayout(self.quick_oral_frame)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(5)
+
+        self.quick_oral_label = QLabel("Выпито по потребности:")
+        self.quick_oral_label.setObjectName("quick_oral_label")
+
+        self.quick_oral_time = QLineEdit()
+        self.quick_oral_time.setObjectName("quick_oral_cell")
+        self.quick_oral_time.setFixedWidth(58)
+        self.quick_oral_time.setMaxLength(5)
+        self.quick_oral_time.setPlaceholderText("чч:мм")
+
+        self.quick_oral_amount = QLineEdit()
+        self.quick_oral_amount.setObjectName("quick_oral_cell")
+        self.quick_oral_amount.setFixedWidth(62)
+        self.quick_oral_amount.setPlaceholderText("мл")
+        self.quick_oral_amount.setValidator(QIntValidator(0, 99999, self.quick_oral_amount))
+
+        layout.addWidget(self.quick_oral_label)
+        layout.addStretch()
+        layout.addWidget(self.quick_oral_time)
+        layout.addWidget(self.quick_oral_amount)
+
+        self.quick_oral_time.returnPressed.connect(self._normalize_quick_oral_time)
+        self.quick_oral_time.returnPressed.connect(self._save_quick_oral_intake)
+        self.quick_oral_time.editingFinished.connect(self._normalize_quick_oral_time)
+        self.quick_oral_amount.returnPressed.connect(self._save_quick_oral_intake)
+        self.quick_oral_amount.editingFinished.connect(self._save_quick_oral_intake)
+
+        self.quick_oral_frame.setVisible(False)
+        self.data_layout.addWidget(self.quick_oral_frame)
+
+    def configure_quick_oral_intake(self, service=None, admission_id=None, shift_date=None, visible=False):
+        self.quick_oral_service = service
+        self.quick_oral_admission_id = int(admission_id) if admission_id else None
+        self.quick_oral_shift_date = shift_date
+        self.quick_oral_frame.setVisible(bool(visible))
+        self._reset_quick_oral_fields()
+
+    def _reset_quick_oral_fields(self):
+        self.quick_oral_time.setText(self._default_quick_oral_time())
+        self.quick_oral_amount.clear()
+
+    def _default_quick_oral_time(self):
+        if self.quick_oral_service and self.quick_oral_shift_date and hasattr(self.quick_oral_service, "current_shift_time"):
+            try:
+                return self.quick_oral_service.current_shift_time(self.quick_oral_shift_date)
+            except Exception:
+                pass
+        return datetime.now().strftime("%H:%M")
+
+    def _normalize_quick_oral_time(self):
+        raw_time = self.quick_oral_time.text().strip()
+        fallback_time = self._default_quick_oral_time()
+        if self.quick_oral_service and hasattr(self.quick_oral_service, "normalize_time"):
+            normalized_time = self.quick_oral_service.normalize_time(raw_time, fallback_time)
+        else:
+            normalized_time = ShiftService.normalize_time(raw_time, fallback_time)
+        self.quick_oral_time.setText(normalized_time)
+        return normalized_time
+
+    def _save_quick_oral_intake(self):
+        if self._quick_oral_saving:
+            return
+        if not self.quick_oral_frame.isVisible():
+            return
+        text = self.quick_oral_amount.text().strip()
+        if not text:
+            return
+        if not self.quick_oral_service or not self.quick_oral_admission_id or not self.quick_oral_shift_date:
+            return
+
+        self._quick_oral_saving = True
+        try:
+            amount = float(text)
+            if amount <= 0:
+                raise ValueError("Объем должен быть больше 0 мл")
+
+            event_dt = self.quick_oral_service.resolve_datetime(
+                self._normalize_quick_oral_time(),
+                self.quick_oral_shift_date,
+            ).replace(second=0, microsecond=0)
+
+            existing = self._quick_oral_event_at(event_dt)
+            existing_amount = float(getattr(existing, "amount_ml", 0.0) or 0.0) if existing else 0.0
+            self.quick_oral_service.upsert_oral_intake_event(
+                self.quick_oral_admission_id,
+                event_dt,
+                existing_amount + amount,
+                expected_version=getattr(existing, "version", None),
+            )
+        except Exception as exc:
+            CustomMessageBox.warning(self, "Предупреждение", f"Ошибка сохранения питания: {exc}")
+            return
+        finally:
+            self._quick_oral_saving = False
+
+        self._reset_quick_oral_fields()
+        self.oral_intake_changed.emit()
+
+    def _quick_oral_event_at(self, event_dt):
+        if not hasattr(self.quick_oral_service, "get_oral_intake_events"):
+            return None
+        events = self.quick_oral_service.get_oral_intake_events(
+            self.quick_oral_admission_id,
+            self.quick_oral_shift_date,
+        )
+        key = event_dt.strftime("%Y-%m-%d %H:%M")
+        for event in events or []:
+            event_time = getattr(event, "event_time", None)
+            if event_time and event_time.strftime("%Y-%m-%d %H:%M") == key:
+                return event
+        return None
 
     def update_values(self, infusion=0, preparats=0, blood=0, plasma=0,
                       infusion_daily=0, preparats_daily=0, blood_daily=0, plasma_daily=0,
