@@ -433,6 +433,12 @@
       "priority_level": 3,
       "offset_min": 0,
       "color": "#bdc3c7"
+    },
+    "Mukolitiks": {
+      "name_ru": "Муколитики",
+      "priority_level": 3,
+      "offset_min": 0,
+      "color": "#bdc3c7"
     }
   },
   "drugs": {
@@ -2367,6 +2373,29 @@
         "volume": 250
       },
       "group": "a-adrenoblok"
+    },
+    "ambroxol": {
+      "latin": "Ambroxoli",
+      "aliases": [
+        "амброксол",
+        "амбробене",
+        "бронхорус",
+        "лазолван"
+      ],
+      "star_alias": "амб*, лазо*",
+      "admin_type": "per_os",
+      "uses_line": false,
+      "duration_min": 0,
+      "default_dose": 30.0,
+      "forms": [
+        30.0
+      ],
+      "unit": "mg",
+      "form_unit": "mg",
+      "form_key": "tablet",
+      "concentration_mg_ml": 0,
+      "default_dilution": null,
+      "group": "Mukolitiks"
     }
   },
   "admin_types": {

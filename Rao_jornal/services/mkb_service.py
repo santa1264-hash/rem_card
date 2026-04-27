@@ -11,8 +11,27 @@ class MKBService:
     def get_diagnosis_by_code(self, code: str) -> Optional[str]:
         # MKB codes are often stored with periods, but users might omit them.
         # Also, case-insensitive search.
-        cleaned_code = code.upper()
-        self.cursor.execute("SELECT name FROM class_mkb WHERE code = ? COLLATE NOCASE", (cleaned_code,))
+        cleaned_code = code.strip().upper()
+        candidates = [cleaned_code]
+        if not cleaned_code.endswith(("+", "*")):
+            candidates.extend([f"{cleaned_code}+", f"{cleaned_code}*"])
+
+        placeholders = ", ".join("?" for _ in candidates)
+        self.cursor.execute(
+            f"""
+            SELECT name
+            FROM class_mkb
+            WHERE code COLLATE NOCASE IN ({placeholders})
+            ORDER BY CASE UPPER(code)
+                WHEN ? THEN 0
+                WHEN ? THEN 1
+                WHEN ? THEN 2
+                ELSE 3
+            END
+            LIMIT 1
+            """,
+            (*candidates, cleaned_code, f"{cleaned_code}+", f"{cleaned_code}*"),
+        )
         row = self.cursor.fetchone()
         if row:
             return row["name"]

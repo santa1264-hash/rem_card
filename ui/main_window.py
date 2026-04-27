@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QMainWindow, QStackedWidget, QApplication, QVBoxLayout, QWidget, QFrame, QMessageBox
-from PySide6.QtCore import QSettings, Qt, QPoint, QEvent
+from PySide6.QtCore import QSettings, Qt, QPoint, QEvent, QTimer
 from PySide6.QtGui import QCursor
 from typing import TYPE_CHECKING
 
@@ -195,6 +195,10 @@ class MainWindow(QMainWindow):
         self._focus_refresh_pending = False
         self._focus_refresh_in_progress = False
         self._last_focus_refresh_ts = 0.0
+        self._focus_refresh_timer = QTimer(self)
+        self._focus_refresh_timer.setSingleShot(True)
+        self._focus_refresh_timer.setInterval(0)
+        self._focus_refresh_timer.timeout.connect(self._run_focus_refresh)
 
     def init_ui(self):
         self.welcome = WelcomeWidget()
@@ -484,8 +488,7 @@ class MainWindow(QMainWindow):
         if self._is_closing or self._focus_refresh_pending:
             return
         self._focus_refresh_pending = True
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, self._run_focus_refresh)
+        self._focus_refresh_timer.start()
 
     @staticmethod
     def _is_qobject_alive(obj) -> bool:

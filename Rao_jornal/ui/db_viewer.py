@@ -208,7 +208,27 @@ class DatabaseViewerDialog(QDialog):
             # Если текста нет, пробуем найти в МКБ по коду
             if not diag_text and diag_code and hasattr(self, 'mkb_cursor'):
                 try:
-                    self.mkb_cursor.execute("SELECT name FROM class_mkb WHERE code = ?", (diag_code,))
+                    cleaned_code = diag_code.strip().upper()
+                    candidates = [cleaned_code]
+                    if not cleaned_code.endswith(("+", "*")):
+                        candidates.extend([f"{cleaned_code}+", f"{cleaned_code}*"])
+
+                    placeholders = ", ".join("?" for _ in candidates)
+                    self.mkb_cursor.execute(
+                        f"""
+                        SELECT name
+                        FROM class_mkb
+                        WHERE code COLLATE NOCASE IN ({placeholders})
+                        ORDER BY CASE UPPER(code)
+                            WHEN ? THEN 0
+                            WHEN ? THEN 1
+                            WHEN ? THEN 2
+                            ELSE 3
+                        END
+                        LIMIT 1
+                        """,
+                        (*candidates, cleaned_code, f"{cleaned_code}+", f"{cleaned_code}*"),
+                    )
                     res = self.mkb_cursor.fetchone()
                     if res: diag_text = res[0]
                 except: pass

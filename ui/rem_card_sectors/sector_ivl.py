@@ -566,7 +566,7 @@ class SectorIvl(BaseSectorWidget):
         if not self.remcard_service or not self.admission_id:
             self.history_table.setRowCount(0)
             return
-        events = self.remcard_service.get_ventilation_timeline(self.admission_id)
+        events = list(reversed(self.remcard_service.get_ventilation_timeline(self.admission_id)))
         self.history_table.setRowCount(len(events))
         for row_idx, event in enumerate(events):
             event_type = getattr(event.event_type, "value", str(event.event_type))

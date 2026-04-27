@@ -60,6 +60,10 @@ class DietIntakeWidget(QWidget):
         self._sync_prn_pending = False
         self._destroyed = False
         self._fact_undo_stack = []
+        self._sync_prn_timer = QTimer(self)
+        self._sync_prn_timer.setSingleShot(True)
+        self._sync_prn_timer.setInterval(0)
+        self._sync_prn_timer.timeout.connect(self._run_scheduled_sync_prn_alignment)
         self.destroyed.connect(self._mark_destroyed)
 
         self._build_ui()
@@ -392,6 +396,10 @@ class DietIntakeWidget(QWidget):
     def _mark_destroyed(self, *_args):
         self._destroyed = True
         self._sync_prn_pending = False
+        try:
+            self._sync_prn_timer.stop()
+        except RuntimeError:
+            pass
 
     @staticmethod
     def _is_qobject_alive(obj) -> bool:
@@ -408,7 +416,7 @@ class DietIntakeWidget(QWidget):
         if self._destroyed or self._sync_prn_pending or not self._is_qobject_alive(self):
             return
         self._sync_prn_pending = True
-        QTimer.singleShot(0, self._run_scheduled_sync_prn_alignment)
+        self._sync_prn_timer.start()
 
     def _run_scheduled_sync_prn_alignment(self):
         self._sync_prn_pending = False
