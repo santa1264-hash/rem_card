@@ -137,6 +137,16 @@ class VitalsWidget(QWidget):
         if not getattr(self, '_programmatic_time_change', False):
             self._time_manually_edited = True
 
+    @staticmethod
+    def _minute_floor(value: datetime) -> datetime:
+        return value.replace(second=0, microsecond=0)
+
+    def _is_status_transition_minute(self, status_event, current_dt: datetime) -> bool:
+        event_start = getattr(status_event, "start_time", None)
+        if not event_start:
+            return False
+        return self._minute_floor(event_start) == self._minute_floor(current_dt)
+
     def _set_time_from_service(self, time_value: str):
         self._programmatic_time_change = True
         try:
@@ -393,23 +403,25 @@ class VitalsWidget(QWidget):
         
         current_time = self.time_edit.value_str()
         current_dt = self.service.resolve_datetime(current_time, self.shift_date)
+        current_minute = self._minute_floor(current_dt)
         
         if self.patient and self.patient.admission_datetime:
-            if current_dt < self.patient.admission_datetime:
+            if current_minute < self._minute_floor(self.patient.admission_datetime):
                 CustomMessageBox.warning(self, "Внимание", f"Пациент поступил в {self.patient.admission_datetime.strftime('%d.%m %H:%M')}. Ввод данных ранее этого времени невозможен.")
                 return
 
-        status_event = self.service.status_service.get_event_at(self.admission_id, current_dt)
+        status_service = getattr(self.service, "status_service", None)
+        status_event = status_service.get_event_at(self.admission_id, current_dt) if status_service else None
         if status_event and status_event.status.is_outcome():
-            if current_dt > status_event.start_time:
+            if current_minute > self._minute_floor(status_event.start_time):
                 outcome_name = "переведен" if status_event.status == status_event.status.TRANSFERRED else "умер"
                 CustomMessageBox.warning(self, "Внимание", f"Пациент {outcome_name} в {status_event.start_time.strftime('%H:%M')}. Ввод данных позже этого времени невозможен.")
                 return
 
-        is_active = self.service.status_service.is_active_at(self.admission_id, current_dt)
-        if not is_active:
+        is_active = status_service.is_active_at(self.admission_id, current_dt) if status_service else True
+        if not is_active and not self._is_status_transition_minute(status_event, current_dt):
             CustomMessageBox.warning(self, "Внимание", "Пациент в операционной или вне отделения. Ввод витальных функций невозможен.")
-            next_start = self.service.status_service.get_next_active_event_start(self.admission_id, current_dt)
+            next_start = status_service.get_next_active_event_start(self.admission_id, current_dt) if status_service else None
             if next_start:
                 real_now_limit = datetime.now() + timedelta(minutes=15)
                 if next_start > real_now_limit: next_start = real_now_limit

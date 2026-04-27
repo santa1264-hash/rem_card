@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..data.dao.patient_dao import PatientDAO
 from ..data.dao.vitals_dao import VitalsDAO
-from ..data.dto.remcard_dto import VitalDTO
+from ..data.dto.remcard_dto import PatientStatus, VitalDTO
 from .shift_service import ShiftService
 
 CHART_LOOKBACK_DAYS = max(0, int(os.environ.get("REMCARD_CHART_LOOKBACK_DAYS", "2")))
@@ -188,6 +188,24 @@ class VitalService:
     def get_all_vital_dates(self, admission_id: int) -> List[datetime]:
         return self.vitals_dao.get_all_vital_dates(admission_id)
 
+    @staticmethod
+    def _minute_floor(value: datetime) -> datetime:
+        return value.replace(second=0, microsecond=0)
+
+    def _status_allows_vital_at(self, admission_id: int, timestamp: datetime) -> bool:
+        if not self.status_service:
+            return True
+
+        event = self.status_service.get_event_at(admission_id, timestamp)
+        if event and event.status == PatientStatus.ACTIVE:
+            return True
+
+        event_start = getattr(event, "start_time", None)
+        if event_start and self._minute_floor(event_start) == self._minute_floor(timestamp):
+            return True
+
+        return False
+
     def validate_timestamp(
         self,
         admission_id: int,
@@ -199,6 +217,8 @@ class VitalService:
         if not patient:
             return False, "Пациент не найден"
 
+        timestamp_minute = self._minute_floor(timestamp)
+
         if shift_date:
             s_start, s_end = self.shift_service.get_day_period(shift_date)
             if timestamp < s_start:
@@ -206,25 +226,20 @@ class VitalService:
             if timestamp >= s_end:
                 return False, f"Время позже окончания смены ({s_end.strftime('%H:%M')})"
 
-        if patient.admission_datetime and timestamp < patient.admission_datetime:
-            is_same_hour = (
-                timestamp.date() == patient.admission_datetime.date()
-                and timestamp.hour == patient.admission_datetime.hour
+        if patient.admission_datetime and timestamp_minute < self._minute_floor(patient.admission_datetime):
+            return False, (
+                "Время меньше времени поступления "
+                f"({patient.admission_datetime.strftime('%d.%m.%Y %H:%M')})"
             )
-            if not is_same_hour:
-                return False, (
-                    "Время меньше времени поступления "
-                    f"({patient.admission_datetime.strftime('%d.%m.%Y %H:%M')})"
-                )
 
-        if patient.transfer_datetime and timestamp > patient.transfer_datetime:
+        if patient.transfer_datetime and timestamp_minute > self._minute_floor(patient.transfer_datetime):
             return False, (
                 "Время больше времени выписки "
                 f"({patient.transfer_datetime.strftime('%d.%m.%Y %H:%M')})"
             )
 
         if self.status_service and not force:
-            if not self.status_service.is_active_at(admission_id, timestamp):
+            if not self._status_allows_vital_at(admission_id, timestamp):
                 return False, "Пациент вне отделения / в операционной в это время"
 
         return True, ""
@@ -235,6 +250,8 @@ class VitalService:
         if not patient:
             return s_start, s_end
 
-        effective_start = max(s_start, patient.admission_datetime) if patient.admission_datetime else s_start
-        effective_end = min(s_end, patient.transfer_datetime) if patient.transfer_datetime else s_end
+        admission_dt = self._minute_floor(patient.admission_datetime) if patient.admission_datetime else None
+        transfer_dt = self._minute_floor(patient.transfer_datetime) if patient.transfer_datetime else None
+        effective_start = max(s_start, admission_dt) if admission_dt else s_start
+        effective_end = min(s_end, transfer_dt) if transfer_dt else s_end
         return effective_start, effective_end

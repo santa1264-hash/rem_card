@@ -45,6 +45,17 @@ class RemCardService(QObject):
     """Р¤Р°СЃР°Рґ, РѕР±СЉРµРґРёРЅСЏСЋС‰РёР№ РІСЃРµ РїРѕРґСЃРµСЂРІРёСЃС‹ РґР»СЏ СѓРґРѕР±СЃС‚РІР° РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ РІ UI."""
     patient_context_changed = Signal(int) # admission_id
 
+    @property
+    def status_service(self):
+        return getattr(self, "_status_service", None)
+
+    @status_service.setter
+    def status_service(self, value):
+        self._status_service = value
+        vitals_service = getattr(self, "_vitals", None)
+        if vitals_service is not None:
+            vitals_service.status_service = value
+
     def __init__(self, vitals_dao, fluids_dao, orders_dao, ventilation_dao, patient_dao, status_service=None, data_service=None):
         super().__init__()
         # Р”Р»СЏ РѕР±СЂР°С‚РЅРѕР№ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё (СѓСЃС‚Р°СЂРµРІС€РµРµ, РїР»Р°РЅРёСЂСѓРµС‚СЃСЏ Рє СѓРґР°Р»РµРЅРёСЋ РїРѕСЃР»Рµ СЂРµС„Р°РєС‚РѕСЂРёРЅРіР° UI)

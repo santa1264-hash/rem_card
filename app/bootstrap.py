@@ -53,6 +53,7 @@ class Container:
             self.orders_dao,
             self.ventilation_dao,
             self.patient_dao,
+            status_service=self.patient_status_service,
             data_service=self.data_service,
         )
         # Прокидываем сервис статусов в основной фасад (RemCardService)

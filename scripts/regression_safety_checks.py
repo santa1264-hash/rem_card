@@ -305,6 +305,168 @@ def _check_balance_admission_hour_visibility(temp_root: str) -> tuple[bool, str]
         manager.close()
 
 
+def _check_vitals_boundary_minutes(temp_root: str) -> tuple[bool, str]:
+    from datetime import datetime
+
+    from rem_card.data.dao.db_manager import DatabaseManager
+    from rem_card.data.dao.patient_dao import PatientDAO
+    from rem_card.data.dao.patient_status_dao import PatientStatusDAO
+    from rem_card.data.dao.vitals_dao import VitalsDAO
+    from rem_card.data.dto.remcard_dto import PatientStatus, VitalDTO
+    from rem_card.services.patient_status_service import PatientStatusService
+    from rem_card.services.vital_service import VitalService
+
+    db_path = os.path.join(temp_root, "vitals_boundary_minutes.db")
+    manager = DatabaseManager(db_path, db_path)
+
+    def seed_patient(
+        *,
+        history_number: str,
+        admission_dt: datetime,
+        terminal_dt: datetime | None = None,
+        terminal_status: PatientStatus | None = None,
+    ) -> int:
+        with manager.remcard_transaction(source=f"regression_seed_{history_number}") as cursor:
+            cursor.execute("INSERT INTO patients(full_name) VALUES (?)", (f"Boundary {history_number}",))
+            patient_id = int(cursor.lastrowid)
+
+            transfer_dt = terminal_dt if terminal_status == PatientStatus.TRANSFERRED else None
+            death_dt = terminal_dt if terminal_status == PatientStatus.DEAD else None
+            cursor.execute(
+                """
+                INSERT INTO admissions(
+                    patient_id,
+                    bed_number,
+                    history_number,
+                    admission_datetime,
+                    transfer_datetime,
+                    death_datetime,
+                    is_active
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    patient_id,
+                    patient_id,
+                    history_number,
+                    admission_dt.isoformat(),
+                    transfer_dt.isoformat() if transfer_dt else None,
+                    death_dt.isoformat() if death_dt else None,
+                ),
+            )
+            admission_id = int(cursor.lastrowid)
+
+            active_end = terminal_dt.isoformat() if terminal_dt else None
+            cursor.execute(
+                """
+                INSERT INTO patient_status_events(
+                    admission_id,
+                    status,
+                    start_time,
+                    end_time,
+                    created_by,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, 'REGRESSION', ?, ?)
+                """,
+                (
+                    admission_id,
+                    PatientStatus.ACTIVE.value,
+                    admission_dt.isoformat(),
+                    active_end,
+                    admission_dt.isoformat(),
+                    admission_dt.isoformat(),
+                ),
+            )
+
+            if terminal_status and terminal_dt:
+                cursor.execute(
+                    """
+                    INSERT INTO patient_status_events(
+                        admission_id,
+                        status,
+                        start_time,
+                        created_by,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, 'REGRESSION', ?, ?)
+                    """,
+                    (
+                        admission_id,
+                        terminal_status.value,
+                        terminal_dt.isoformat(),
+                        terminal_dt.isoformat(),
+                        terminal_dt.isoformat(),
+                    ),
+                )
+            return admission_id
+
+    try:
+        patient_dao = PatientDAO(manager)
+        status_service = PatientStatusService(PatientStatusDAO(manager))
+        vital_service = VitalService(VitalsDAO(manager), patient_dao, status_service)
+
+        admission_dt = datetime(2026, 4, 24, 20, 0, 41, 123456)
+        admission_id = seed_patient(history_number="REG-VITAL-ADMIT", admission_dt=admission_dt)
+
+        before_ok, _ = vital_service.validate_timestamp(
+            admission_id,
+            datetime(2026, 4, 24, 19, 59),
+            admission_dt,
+        )
+        at_ok, at_msg = vital_service.validate_timestamp(
+            admission_id,
+            datetime(2026, 4, 24, 20, 0),
+            admission_dt,
+        )
+        if before_ok:
+            return False, "19:59 was accepted for a 20:00 admission"
+        if not at_ok:
+            return False, f"20:00 was rejected for a 20:00 admission: {at_msg}"
+
+        vital_service.add_vital(
+            VitalDTO(
+                id=None,
+                admission_id=admission_id,
+                timestamp=datetime(2026, 4, 24, 20, 0),
+                pulse=80,
+            ),
+            shift_date=admission_dt,
+        )
+        visible_vitals = vital_service.get_vitals(admission_id, admission_dt)
+        if len(visible_vitals) != 1:
+            return False, f"20:00 vital was saved but not visible, count={len(visible_vitals)}"
+
+        terminal_dt = datetime(2026, 4, 24, 23, 0, 37)
+        for status in (PatientStatus.OUT, PatientStatus.OR, PatientStatus.TRANSFERRED, PatientStatus.DEAD):
+            terminal_admission_id = seed_patient(
+                history_number=f"REG-VITAL-{status.value}",
+                admission_dt=datetime(2026, 4, 24, 20, 0),
+                terminal_dt=terminal_dt,
+                terminal_status=status,
+            )
+            terminal_ok, terminal_msg = vital_service.validate_timestamp(
+                terminal_admission_id,
+                datetime(2026, 4, 24, 23, 0),
+                terminal_dt,
+            )
+            after_ok, _ = vital_service.validate_timestamp(
+                terminal_admission_id,
+                datetime(2026, 4, 24, 23, 1),
+                terminal_dt,
+            )
+            if not terminal_ok:
+                return False, f"23:00 was rejected for {status.value}: {terminal_msg}"
+            if after_ok:
+                return False, f"23:01 was accepted after {status.value} at 23:00"
+
+        return True, "ok"
+    finally:
+        manager.close()
+
+
 def _check_orders_force_refresh_accepts_unchanged_version(temp_root: str) -> tuple[bool, str]:
     from datetime import datetime
 
@@ -516,6 +678,7 @@ def main():
         ("backup_cleanup_gating", _check_backup_cleanup_gating),
         ("backup_count_limit_enforcement", _check_backup_count_limit_enforcement),
         ("balance_admission_hour_visibility", _check_balance_admission_hour_visibility),
+        ("vitals_boundary_minutes", _check_vitals_boundary_minutes),
         ("orders_force_refresh_accepts_unchanged_version", _check_orders_force_refresh_accepts_unchanged_version),
         ("doctor_orders_late_model_binding", _check_doctor_orders_late_model_binding),
         ("order_row_delete_without_times_marks_draft", _check_order_row_delete_without_times_marks_draft),
