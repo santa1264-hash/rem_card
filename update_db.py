@@ -1,7 +1,7 @@
 import sqlite3
 
 from rem_card.app.paths import DB_LOCK_PATH, JOURNAL_DB_PATH, ensure_directories
-from rem_card.app.sqlite_shared import SQLiteWriteController, configure_connection, run_integrity_check
+from rem_card.app.sqlite_shared import FileWriteLock, SQLiteWriteController, configure_connection, run_integrity_check
 from rem_card.app.unified_db_schema import ensure_unified_schema
 
 
@@ -10,9 +10,17 @@ def update_db():
 
     print(f"[DB PATH] unified_runtime.db -> {JOURNAL_DB_PATH}")
 
+    profile_lock = FileWriteLock(DB_LOCK_PATH, stale_timeout_sec=10 * 60)
+    if not profile_lock.acquire(owner_id="update_db_script", source="connection_profile"):
+        raise RuntimeError("Could not acquire db lock for connection profile")
+
     conn = sqlite3.connect(JOURNAL_DB_PATH, check_same_thread=False, isolation_level=None, timeout=5.0)
     try:
         configure_connection(conn)
+    finally:
+        profile_lock.release()
+
+    try:
         ok, result = run_integrity_check(conn)
         if not ok:
             raise RuntimeError(f"Integrity check failed: {result}")

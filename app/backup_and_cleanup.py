@@ -5,8 +5,19 @@ import time
 from datetime import datetime, timedelta
 
 from rem_card.app.logger import logger
-from rem_card.app.paths import ARCHIV_DIR, BACKUPS_RC_DIR, LOGS_DIR, REMCARD_DB_PATH, REPORT_DIR, ensure_directories
+from rem_card.app.paths import (
+    ARCHIV_DIR,
+    BACKUPS_RC_DIR,
+    BACKUPS_VALID_DIR,
+    DB_LOCK_PATH,
+    INVALID_BACKUPS_DIR,
+    LOGS_DIR,
+    REMCARD_DB_PATH,
+    REPORT_DIR,
+    ensure_directories,
+)
 from rem_card.app.sqlite_shared import (
+    FileWriteLock,
     backup_connection,
     configure_connection,
     list_backup_candidates,
@@ -66,7 +77,7 @@ def perform_daily_backup_and_cleanup():
         backup_date_str = resuscitation_date.strftime("%Y-%m-%d")
         db_base_name = os.path.splitext(os.path.basename(REMCARD_DB_PATH))[0]
         backup_file_name = f"{db_base_name}_{backup_date_str}.db"
-        backup_file_path = os.path.join(BACKUPS_RC_DIR, backup_file_name)
+        backup_file_path = os.path.join(BACKUPS_VALID_DIR, backup_file_name)
 
         # 2) Check if backup for this day already exists
         if not os.path.exists(backup_file_path):
@@ -82,7 +93,10 @@ def perform_daily_backup_and_cleanup():
         if _can_cleanup_old_backups(REMCARD_DB_PATH, BACKUPS_RC_DIR):
             cutoff_30_days = now - timedelta(days=BACKUP_RETENTION_DAYS)
             _cleanup_old_files(BACKUPS_RC_DIR, "*.db", cutoff_30_days, "backup")
+            _cleanup_old_files(BACKUPS_VALID_DIR, "*.db", cutoff_30_days, "validated backup")
+            _cleanup_old_files(BACKUPS_VALID_DIR, "*.meta.json", cutoff_30_days, "validated backup metadata")
             _enforce_backup_limits(BACKUPS_RC_DIR)
+            _enforce_backup_limits(BACKUPS_VALID_DIR)
         else:
             logger.warning(
                 "Backup cleanup skipped: no healthy backup source is available yet. "
@@ -155,7 +169,15 @@ def _create_safe_sqlite_backup(db_path: str, backup_file_path: str):
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=5.0)
     try:
-        backup_connection(conn, backup_file_path)
+        configure_connection(conn, readonly=True)
+        backup_connection(
+            conn,
+            backup_file_path,
+            invalid_dir=INVALID_BACKUPS_DIR,
+            logger=logger,
+            lock_path=DB_LOCK_PATH,
+            source="daily_backup",
+        )
     finally:
         conn.close()
 
@@ -189,7 +211,7 @@ def _enforce_backup_limits(backup_dir: str):
     # Hard limit by count
     for old_path in files[BACKUP_MAX_COUNT:]:
         try:
-            os.remove(old_path)
+            _remove_backup_with_meta(old_path)
             logger.info("Deleted backup by count-limit: %s", old_path)
         except Exception as exc:
             logger.warning("Failed to delete backup by count-limit %s: %s", old_path, exc)
@@ -211,15 +233,27 @@ def _enforce_backup_limits(backup_dir: str):
             break
         try:
             size = os.path.getsize(old_path)
-            os.remove(old_path)
+            _remove_backup_with_meta(old_path)
             total_size -= size
             logger.info("Deleted backup by size-limit: %s", old_path)
         except Exception as exc:
             logger.warning("Failed to delete backup by size-limit %s: %s", old_path, exc)
 
 
+def _remove_backup_with_meta(db_path: str):
+    os.remove(db_path)
+    meta_path = f"{db_path}.meta.json"
+    if os.path.exists(meta_path):
+        os.remove(meta_path)
+
+
 def _prune_change_log_and_maybe_compact(db_path: str, now: datetime):
     if not os.path.exists(db_path):
+        return None
+
+    lock = FileWriteLock(DB_LOCK_PATH, stale_timeout_sec=10 * 60, logger=logger)
+    if not lock.acquire(owner_id=f"{os.getpid()}:backup_cleanup", source="change_log_cleanup"):
+        logger.warning("Change-log maintenance skipped: db.lock is busy.")
         return None
 
     conn = None
@@ -324,6 +358,7 @@ def _prune_change_log_and_maybe_compact(db_path: str, now: datetime):
     finally:
         if conn:
             conn.close()
+        lock.release()
 
 
 def _maybe_compact_db(conn: sqlite3.Connection, db_path: str, now: datetime) -> bool:

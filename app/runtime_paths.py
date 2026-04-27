@@ -18,12 +18,19 @@ REQUIRED_BAZA_DIRS = (
     "backup_health/invalid_backups",
     "backup_health/reports",
     "backups",
+    "backups/valid",
+    "config",
     "corrupted_db",
     "database",
+    "locks",
     "logs",
+    "quarantine",
+    "quarantine/shared_db",
+    "quarantine/snapshots",
     "rem_card",
     "report",
     "session_locks",
+    "snapshots",
 )
 
 

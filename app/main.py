@@ -12,7 +12,6 @@ from rem_card.app.runtime_paths import (
     create_baza_structure_and_db,
     get_local_logs_dir,
     is_compiled,
-    validate_baza_dir_for_runtime,
     write_configured_baza_dir,
 )
 
@@ -119,16 +118,31 @@ def _validate_compiled_role_startup(role: Optional[str]) -> bool:
     if not is_compiled() or role not in ("doctor", "nurse"):
         return True
 
-    ok, message = validate_baza_dir_for_runtime()
-    if ok:
+    try:
+        from rem_card.app.startup_db_guard import run_startup_db_guard
+
+        result = run_startup_db_guard(role=role)
+    except Exception as exc:
+        _write_startup_local_log(f"startup db guard crashed for role={role}: {exc}")
+        _show_custom_warning(
+            "База данных недоступна",
+            "Не удалось проверить базу данных. Работа временно недоступна. Сообщите ответственному.",
+        )
+        return False
+
+    if result.ok:
+        if result.recovered:
+            _write_startup_local_log(
+                f"startup db auto-recovered for role={role}: "
+                f"restored_from={result.restored_from}; quarantine={result.quarantine_path}"
+            )
+            _show_custom_info("База восстановлена", result.user_message)
         return True
 
-    full_message = (
-        f"{message}\n\n"
-        "Запустите RemCardPathSetup.exe и выберите сетевую папку Baza_rao3_jurnal."
+    _write_startup_local_log(
+        f"startup blocked for role={role}: {result.user_message}; technical={result.technical_reason}"
     )
-    _write_startup_local_log(f"startup blocked for role={role}: {full_message}")
-    _show_custom_warning("База данных недоступна", full_message)
+    _show_custom_warning("База данных недоступна", result.user_message)
     return False
 
 

@@ -23,14 +23,17 @@ from rem_card.app.logger import logger
 from rem_card.app.local_replica_sync import LocalReplicaSync
 from rem_card.app.paths import (
     BACKUPS_RC_DIR,
+    BACKUPS_VALID_DIR,
     CORRUPTED_DB_DIR,
     DB_LOCK_PATH,
     DB_ROTATION_LOCK_PATH,
+    INVALID_BACKUPS_DIR,
     LOCAL_CACHE_DIR,
     LOCAL_REMCARD_OUTBOX_PATH,
     LOCAL_REMCARD_REPLICA_PATH,
 )
 from rem_card.app.sqlite_shared import (
+    FileWriteLock,
     SQLiteWriteController,
     backup_connection,
     configure_connection,
@@ -182,6 +185,7 @@ class DatabaseManager:
             db_path=self.db_path,
             archive_dir=os.path.dirname(self.db_path),
             rotation_lock_path=DB_ROTATION_LOCK_PATH,
+            db_lock_path=DB_LOCK_PATH,
             logger=logger,
             max_age_days=180,
         )
@@ -194,6 +198,10 @@ class DatabaseManager:
     def _init_connections(self):
         logger.info("Initializing unified DB connection at %s", self.db_path)
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        profile_lock = FileWriteLock(DB_LOCK_PATH, stale_timeout_sec=10 * 60, logger=logger)
+        owner_id = f"{socket.gethostname()}:{os.getpid()}:remcard_init"
+        if not profile_lock.acquire(owner_id=owner_id, source="connection_profile"):
+            raise sqlite3.OperationalError("Could not acquire db lock for connection profile")
         try:
             conn = sqlite3.connect(
                 self.db_path,
@@ -206,6 +214,8 @@ class DatabaseManager:
             if is_database_unavailable_error(exc):
                 raise notify_database_unavailable(exc, context="remcard_init", logger=logger) from exc
             raise
+        finally:
+            profile_lock.release()
         self._remcard_conn = conn
         self._journal_conn = conn
 
@@ -846,7 +856,7 @@ class DatabaseManager:
                 isolation_level=None,
                 timeout=5.0,
             )
-            configure_connection(conn, profile="network")
+            configure_connection(conn, readonly=True, profile="network")
             ok, result = run_integrity_check(conn)
             if ok:
                 logger.info("Background integrity_check passed for %s", self.db_path)
@@ -872,12 +882,19 @@ class DatabaseManager:
         if not self._remcard_conn:
             return None
 
-        os.makedirs(BACKUPS_RC_DIR, exist_ok=True)
+        os.makedirs(BACKUPS_VALID_DIR, exist_ok=True)
         db_name = os.path.splitext(os.path.basename(self.db_path))[0]
         backup_name = f"{prefix}_{db_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        backup_path = os.path.join(BACKUPS_RC_DIR, backup_name)
+        backup_path = os.path.join(BACKUPS_VALID_DIR, backup_name)
         try:
-            backup_connection(self._remcard_conn, backup_path)
+            backup_connection(
+                self._remcard_conn,
+                backup_path,
+                invalid_dir=INVALID_BACKUPS_DIR,
+                logger=logger,
+                lock_path=DB_LOCK_PATH,
+                source=f"{prefix}_backup",
+            )
             self._rotate_backups()
             self._last_backup_ts = time.time()
             logger.info("%s backup created (%s): %s", prefix.capitalize(), source, backup_path)

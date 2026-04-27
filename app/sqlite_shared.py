@@ -3,6 +3,7 @@ import logging
 import os
 import queue
 import random
+import hashlib
 import shutil
 import socket
 import sqlite3
@@ -13,7 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Optional
 
-SQLITE_BUSY_TIMEOUT_MS = max(100, int(os.environ.get("REMCARD_SQLITE_BUSY_TIMEOUT_MS", "5000")))
+NETWORK_SAFE_DB_PROFILE = "network_safe_v1"
+SQLITE_BUSY_TIMEOUT_MS = max(100, int(os.environ.get("REMCARD_SQLITE_BUSY_TIMEOUT_MS", "10000")))
 _SQLITE_ALLOWED_CONNECTION_PROFILES = {"network", "local_replica", "local_outbox"}
 _SQLITE_ALLOWED_JOURNAL_MODES = {"DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF"}
 _SQLITE_ALLOWED_SYNCHRONOUS = {"OFF", "NORMAL", "FULL", "EXTRA"}
@@ -39,11 +41,11 @@ def _resolve_sqlite_profile_settings(profile: str = "network") -> dict[str, Any]
     settings_by_profile: dict[str, dict[str, Any]] = {
         "network": {
             "profile": "network",
-            "journal_mode": "TRUNCATE",
-            "synchronous": "NORMAL",
+            "journal_mode": "DELETE",
+            "synchronous": "EXTRA",
             "temp_store": "MEMORY",
             "cache_kb": 8 * 1024,
-            "mmap_mb": 64,
+            "mmap_mb": 0,
         },
         "local_replica": {
             "profile": "local_replica",
@@ -95,6 +97,11 @@ def _resolve_sqlite_profile_settings(profile: str = "network") -> dict[str, Any]
     if mmap_override and mmap_override >= 0:
         settings["mmap_mb"] = mmap_override
 
+    if normalized_profile == "network":
+        settings["journal_mode"] = "DELETE"
+        settings["synchronous"] = "EXTRA"
+        settings["mmap_mb"] = 0
+
     return settings
 
 
@@ -136,19 +143,188 @@ def run_quick_check(conn: sqlite3.Connection) -> tuple[bool, str]:
     return result == "ok", str(result)
 
 
-def backup_connection(conn: sqlite3.Connection, backup_path: str):
-    os.makedirs(os.path.dirname(backup_path), exist_ok=True)
-    backup_conn = sqlite3.connect(backup_path)
+def _move_invalid_backup(candidate_path: str, invalid_dir: Optional[str], reason: str) -> Optional[str]:
+    if not candidate_path or not os.path.exists(candidate_path):
+        return None
+    if not invalid_dir:
+        try:
+            os.remove(candidate_path)
+        except Exception:
+            pass
+        return None
+
+    os.makedirs(invalid_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_name = os.path.basename(candidate_path)
+    invalid_path = os.path.join(invalid_dir, f"invalid_{timestamp}_{base_name}")
+    counter = 1
+    while os.path.exists(invalid_path):
+        invalid_path = os.path.join(invalid_dir, f"invalid_{timestamp}_{counter}_{base_name}")
+        counter += 1
     try:
-        with backup_conn:
-            conn.backup(backup_conn)
+        os.replace(candidate_path, invalid_path)
+        try:
+            with open(f"{invalid_path}.reason.txt", "w", encoding="utf-8") as fh:
+                fh.write(f"time={datetime.now().isoformat()}\n")
+                fh.write(f"reason={reason}\n")
+        except Exception:
+            pass
+        return invalid_path
+    except Exception:
+        try:
+            os.remove(candidate_path)
+        except Exception:
+            pass
+        return None
+
+
+def _infer_baza_dir_for_audit(path: str) -> Optional[str]:
+    try:
+        current = os.path.abspath(os.path.dirname(path))
+        while current and os.path.dirname(current) != current:
+            if os.path.basename(current) == "Baza_rao3_jurnal":
+                return current
+            current = os.path.dirname(current)
+    except Exception:
+        return None
+    return None
+
+
+def _write_backup_audit(event: str, backup_path: str, details: dict[str, Any]):
+    try:
+        from rem_card.app.jsonl_audit_log import write_audit_event
+
+        write_audit_event(
+            event,
+            baza_dir=_infer_baza_dir_for_audit(backup_path),
+            details={"backup_path": backup_path, **details},
+        )
+    except Exception:
+        pass
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_backup_meta(meta_path: str, backup_path: str, sha256: str):
+    payload = {
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "backup_path": backup_path,
+        "size_bytes": os.path.getsize(backup_path),
+        "sha256": sha256,
+        "quick_check": "ok",
+        "integrity_check": "ok",
+        "db_profile": NETWORK_SAFE_DB_PROFILE,
+    }
+    with open(meta_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+
+
+def backup_connection(
+    conn: sqlite3.Connection,
+    backup_path: str,
+    *,
+    invalid_dir: Optional[str] = None,
+    logger: Optional[logging.Logger] = None,
+    validate: bool = True,
+    lock_path: Optional[str] = None,
+    owner_id: Optional[str] = None,
+    source: str = "backup",
+    lock_wait_sec: float = 60.0,
+):
+    logger = logger or logging.getLogger(__name__)
+    lock = None
+    if lock_path:
+        lock = FileWriteLock(lock_path, stale_timeout_sec=10 * 60, logger=logger)
+        lock_owner = owner_id or f"{socket.gethostname()}:{os.getpid()}:sqlite_backup"
+        deadline = time.time() + max(1.0, lock_wait_sec)
+        while not lock.acquire(lock_owner, source):
+            if time.time() >= deadline:
+                raise sqlite3.OperationalError(f"Could not acquire db lock for backup: {lock_path}")
+            time.sleep(0.25)
+
+    try:
+        os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+        temp_path = f"{backup_path}.tmp_{os.getpid()}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        backup_conn = sqlite3.connect(temp_path)
+        try:
+            with backup_conn:
+                conn.backup(backup_conn)
+        except Exception:
+            try:
+                backup_conn.close()
+            except Exception:
+                pass
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                backup_conn.close()
+            except Exception:
+                pass
+
+        sha256 = ""
+        if validate:
+            ok, reason = validate_sqlite_file(temp_path)
+            if not ok:
+                invalid_path = _move_invalid_backup(temp_path, invalid_dir, reason)
+                logger.warning(
+                    "SQLite backup validation failed for %s: %s%s",
+                    backup_path,
+                    reason,
+                    f" | moved to {invalid_path}" if invalid_path else "",
+                )
+                _write_backup_audit(
+                    "backup_invalid",
+                    backup_path,
+                    {"reason": reason, "invalid_path": invalid_path},
+                )
+                raise sqlite3.DatabaseError(f"backup validation failed: {reason}")
+            sha256 = _sha256_file(temp_path)
+
+        os.replace(temp_path, backup_path)
+        meta_path = f"{backup_path}.meta.json"
+        if validate:
+            _write_backup_meta(meta_path, backup_path, sha256)
+        _write_backup_audit(
+            "backup_validated",
+            backup_path,
+            {
+                "quick_check": "ok",
+                "integrity_check": "ok",
+                "sha256": sha256,
+                "meta_path": meta_path if validate else None,
+            },
+        )
+        return backup_path
     finally:
-        backup_conn.close()
+        if lock:
+            lock.release()
 
 
 def restore_database(db_path: str, backup_path: str):
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    shutil.copy2(backup_path, db_path)
+    temp_path = f"{db_path}.restore_tmp_{os.getpid()}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    shutil.copy2(backup_path, temp_path)
+    ok, reason = validate_sqlite_file(temp_path)
+    if not ok:
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+        raise sqlite3.DatabaseError(f"restore source failed validation: {reason}")
+    os.replace(temp_path, db_path)
+    ok, reason = validate_sqlite_file(db_path)
+    if not ok:
+        raise sqlite3.DatabaseError(f"restored database failed validation: {reason}")
 
 
 def find_latest_backup(backup_dir: str, prefix: Optional[str] = None) -> Optional[str]:
@@ -161,14 +337,19 @@ def list_backup_candidates(backup_dir: str, prefix: Optional[str] = None) -> lis
         return []
 
     candidates = []
-    for name in os.listdir(backup_dir):
-        if not name.endswith(".db"):
-            continue
-        if prefix and not name.startswith(prefix):
-            continue
-        full_path = os.path.join(backup_dir, name)
-        if os.path.isfile(full_path):
-            candidates.append(full_path)
+    scan_dirs = [backup_dir]
+    valid_dir = os.path.join(backup_dir, "valid")
+    if os.path.isdir(valid_dir):
+        scan_dirs.append(valid_dir)
+    for directory in scan_dirs:
+        for name in os.listdir(directory):
+            if not name.endswith(".db"):
+                continue
+            if prefix and not name.startswith(prefix):
+                continue
+            full_path = os.path.join(directory, name)
+            if os.path.isfile(full_path):
+                candidates.append(full_path)
 
     candidates.sort(key=os.path.getmtime, reverse=True)
     return candidates

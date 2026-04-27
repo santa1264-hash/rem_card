@@ -86,6 +86,7 @@ def maybe_rotate_database_if_due(
     db_path: str,
     archive_dir: str,
     rotation_lock_path: str,
+    db_lock_path: Optional[str] = None,
     logger: Optional[logging.Logger] = None,
     max_age_days: int = 180,
 ) -> dict:
@@ -104,8 +105,14 @@ def maybe_rotate_database_if_due(
     if not lock.acquire(owner_id=owner_id, source="db_rotation"):
         return {"status": "rotation_lock_busy"}
 
+    db_lock = None
     conn = None
     try:
+        if db_lock_path:
+            db_lock = FileWriteLock(db_lock_path, stale_timeout_sec=10 * 60, logger=logger)
+            if not db_lock.acquire(owner_id=owner_id, source="db_rotation"):
+                return {"status": "db_lock_busy"}
+
         try:
             conn = sqlite3.connect(
                 db_path,
@@ -185,4 +192,6 @@ def maybe_rotate_database_if_due(
         logger.warning("DB lifecycle rotation completed: %s -> %s", db_path, archived_path)
         return {"status": "rotated", "archived_path": archived_path}
     finally:
+        if db_lock:
+            db_lock.release()
         lock.release()

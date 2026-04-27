@@ -1,0 +1,857 @@
+import json
+import os
+import shutil
+import socket
+import sqlite3
+import threading
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Optional
+
+from rem_card.app.jsonl_audit_log import APP_VERSION, write_audit_event
+from rem_card.app.runtime_paths import (
+    BAZA_DIR_NAME,
+    DataPathConfigurationError,
+    get_journal_db_path,
+    get_required_baza_paths,
+    is_baza_dir_name,
+    resolve_baza_dir,
+)
+from rem_card.app.sqlite_shared import (
+    NETWORK_SAFE_DB_PROFILE,
+    FileWriteLock,
+    configure_connection,
+    run_quick_check,
+    validate_sqlite_file,
+)
+
+
+REQUIRED_CLIENT_POLICY_VERSION = APP_VERSION
+RECOVERY_LOCK_STALE_SEC = 10 * 60
+RECOVERY_LOCK_WAIT_SEC = 10 * 60
+DB_LOCK_WAIT_SEC = 60
+LOCK_HEARTBEAT_SEC = 5
+
+
+class StartupPolicyError(RuntimeError):
+    pass
+
+
+@dataclass
+class StartupDbGuardResult:
+    ok: bool
+    recovered: bool = False
+    user_message: str = ""
+    technical_reason: str = ""
+    restored_from: str = ""
+    quarantine_path: str = ""
+    baza_dir: str = ""
+
+
+class _LockHeartbeat:
+    def __init__(self, lock_path: str, *, role: Optional[str], source: str):
+        self.lock_path = lock_path
+        self.role = role
+        self.source = source
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"{source}Heartbeat", daemon=True)
+
+    def start(self):
+        self._write()
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "timestamp": time.time(),
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+            "role": self.role,
+            "source": self.source,
+        }
+
+    def _write(self):
+        try:
+            with open(self.lock_path, "w", encoding="utf-8") as fh:
+                json.dump(self._payload(), fh, ensure_ascii=True)
+        except Exception:
+            pass
+
+    def _run(self):
+        while not self._stop.wait(LOCK_HEARTBEAT_SEC):
+            self._write()
+
+
+def _now_stamp() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _same_path(left: str, right: str) -> bool:
+    try:
+        return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+    except Exception:
+        return False
+
+
+def _version_tuple(value: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for part in str(value or "").replace("-", ".").split("."):
+        digits = "".join(ch for ch in part if ch.isdigit())
+        if digits:
+            parts.append(int(digits))
+    return tuple(parts or [0])
+
+
+def _is_confirmed_corruption(reason: str) -> bool:
+    text = str(reason or "").lower()
+    corruption_markers = (
+        "database disk image is malformed",
+        "file is not a database",
+        "database corruption",
+        "sqlite_master",
+        "malformed",
+        "not a database",
+        "quick_check failed",
+        "integrity_check failed",
+    )
+    return any(marker in text for marker in corruption_markers)
+
+
+def _is_retryable_availability_error(reason: str) -> bool:
+    text = str(reason or "").lower()
+    retryable_markers = (
+        "database is locked",
+        "database table is locked",
+        "database schema is locked",
+        "busy",
+        "locked",
+    )
+    return any(marker in text for marker in retryable_markers)
+
+
+def _availability_user_message(reason: str) -> str:
+    text = str(reason or "").lower()
+    if "locked" in text or "busy" in text:
+        return "База сейчас занята другим процессом. Повторите запуск через несколько минут."
+    if "permission" in text or "access is denied" in text or "readonly" in text or "read-only" in text:
+        return "Нет прав на запись или чтение в сетевой папке базы. Работа временно недоступна."
+    if "does not exist" in text or "unable to open database file" in text or "network" in text:
+        return "База временно недоступна. Проверьте доступ к сетевой папке и повторите запуск."
+    if "disk i/o error" in text or "disk io error" in text:
+        return "База временно недоступна из-за ошибки диска или сети. Повторите запуск позже."
+    return "Не удалось проверить базу данных. Работа временно недоступна. Сообщите ответственному."
+
+
+def _is_missing_db_file(reason: str) -> bool:
+    text = str(reason or "").lower()
+    return "database file does not exist" in text
+
+
+def _ensure_guard_dirs(baza_dir: str):
+    for path in get_required_baza_paths(baza_dir):
+        os.makedirs(path, exist_ok=True)
+    extra_dirs = (
+        os.path.join(baza_dir, "config"),
+        os.path.join(baza_dir, "locks"),
+        os.path.join(baza_dir, "quarantine"),
+        os.path.join(baza_dir, "quarantine", "shared_db"),
+        os.path.join(baza_dir, "quarantine", "snapshots"),
+        os.path.join(baza_dir, "logs"),
+        os.path.join(baza_dir, "backups"),
+        os.path.join(baza_dir, "backups", "valid"),
+        os.path.join(baza_dir, "snapshots"),
+        os.path.join(baza_dir, "backup_health"),
+        os.path.join(baza_dir, "backup_health", "invalid_backups"),
+    )
+    for path in extra_dirs:
+        os.makedirs(path, exist_ok=True)
+
+
+def _default_client_policy() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "min_client_version": REQUIRED_CLIENT_POLICY_VERSION,
+        "required_db_profile": NETWORK_SAFE_DB_PROFILE,
+        "wal_allowed_on_shared_db": False,
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+
+
+def _load_or_create_client_policy(baza_dir: str, role: Optional[str]) -> dict[str, Any]:
+    config_dir = os.path.join(baza_dir, "config")
+    os.makedirs(config_dir, exist_ok=True)
+    policy_path = os.path.join(config_dir, "client_policy.json")
+
+    if not os.path.exists(policy_path):
+        policy = _default_client_policy()
+        with open(policy_path, "w", encoding="utf-8") as fh:
+            json.dump(policy, fh, ensure_ascii=False, indent=2)
+        write_audit_event(
+            "client_policy_created",
+            baza_dir=baza_dir,
+            role=role,
+            details={"policy_path": policy_path, "required_db_profile": NETWORK_SAFE_DB_PROFILE},
+        )
+        write_audit_event(
+            "client_policy_loaded",
+            baza_dir=baza_dir,
+            role=role,
+            details={"policy_path": policy_path, "min_client_version": policy.get("min_client_version")},
+        )
+        return policy
+
+    with open(policy_path, "r", encoding="utf-8") as fh:
+        policy = json.load(fh)
+
+    changed = False
+    if not policy.get("required_db_profile"):
+        policy["required_db_profile"] = NETWORK_SAFE_DB_PROFILE
+        changed = True
+    if "wal_allowed_on_shared_db" not in policy:
+        policy["wal_allowed_on_shared_db"] = False
+        changed = True
+    if not policy.get("min_client_version"):
+        policy["min_client_version"] = REQUIRED_CLIENT_POLICY_VERSION
+        changed = True
+    if changed:
+        with open(policy_path, "w", encoding="utf-8") as fh:
+            json.dump(policy, fh, ensure_ascii=False, indent=2)
+
+    min_version = str(policy.get("min_client_version") or REQUIRED_CLIENT_POLICY_VERSION)
+    if _version_tuple(APP_VERSION) < _version_tuple(min_version):
+        raise StartupPolicyError("Версия программы устарела. Работа с базой заблокирована. Обновите программу.")
+
+    if str(policy.get("required_db_profile") or "").strip() != NETWORK_SAFE_DB_PROFILE:
+        raise StartupPolicyError("Профиль доступа к базе не соответствует требованиям. Обновите программу.")
+
+    if bool(policy.get("wal_allowed_on_shared_db")):
+        raise StartupPolicyError("Работа заблокирована: WAL для сетевой базы запрещён.")
+
+    write_audit_event(
+        "client_policy_loaded",
+        baza_dir=baza_dir,
+        role=role,
+        details={"policy_path": policy_path, "min_client_version": min_version},
+    )
+    return policy
+
+
+def _acquire_lock_with_wait(
+    lock_path: str,
+    *,
+    stale_timeout_sec: float,
+    wait_sec: float,
+    owner_id: str,
+    source: str,
+    role: Optional[str],
+    baza_dir: str,
+) -> tuple[FileWriteLock, _LockHeartbeat]:
+    lock = FileWriteLock(lock_path, stale_timeout_sec=stale_timeout_sec)
+    deadline = time.time() + max(1.0, wait_sec)
+    last_log = 0.0
+    while time.time() < deadline:
+        _remove_stale_startup_lock_if_needed(
+            lock_path,
+            stale_timeout_sec=stale_timeout_sec,
+            source=source,
+            role=role,
+            baza_dir=baza_dir,
+        )
+        if lock.acquire(owner_id=owner_id, source=source):
+            heartbeat = _LockHeartbeat(lock_path, role=role, source=source)
+            heartbeat.start()
+            write_audit_event(
+                f"{source}_lock_acquired",
+                baza_dir=baza_dir,
+                role=role,
+                details={"lock_path": lock_path},
+            )
+            return lock, heartbeat
+        now = time.time()
+        if now - last_log >= 10:
+            last_log = now
+            write_audit_event(
+                f"{source}_lock_wait",
+                baza_dir=baza_dir,
+                role=role,
+                details={"lock_path": lock_path},
+            )
+        time.sleep(2.0)
+    raise TimeoutError(f"Could not acquire {source} lock: {lock_path}")
+
+
+def _remove_stale_startup_lock_if_needed(
+    lock_path: str,
+    *,
+    stale_timeout_sec: float,
+    source: str,
+    role: Optional[str],
+    baza_dir: str,
+):
+    try:
+        with open(lock_path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except FileNotFoundError:
+        return
+    except Exception:
+        return
+
+    ts = payload.get("timestamp")
+    if not isinstance(ts, (int, float)):
+        stale = True
+    else:
+        stale = (time.time() - ts) > stale_timeout_sec
+    if not stale:
+        return
+
+    try:
+        os.remove(lock_path)
+    except FileNotFoundError:
+        return
+    except Exception:
+        return
+
+    event = "stale_recovery_lock_removed" if source == "recovery" else f"stale_{source}_lock_removed"
+    write_audit_event(
+        event,
+        baza_dir=baza_dir,
+        role=role,
+        details={"lock_path": lock_path, "stale_payload": payload},
+    )
+
+
+def _release_lock(lock: Optional[FileWriteLock], heartbeat: Optional[_LockHeartbeat]):
+    if heartbeat:
+        heartbeat.stop()
+    if lock:
+        lock.release()
+
+
+def _check_quick(db_path: str) -> tuple[bool, str, bool]:
+    if not os.path.exists(db_path):
+        return False, "database file does not exist", False
+    conn = None
+    try:
+        uri = f"file:{db_path}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False, isolation_level=None, timeout=5.0)
+        configure_connection(conn, readonly=True, profile="network")
+        ok, result = run_quick_check(conn)
+        return ok, result, not ok
+    except Exception as exc:
+        reason = str(exc)
+        return False, reason, _is_confirmed_corruption(reason)
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _check_quick_with_retries(
+    db_path: str,
+    *,
+    baza_dir: str,
+    role: Optional[str],
+    attempts: int = 3,
+) -> tuple[bool, str, bool]:
+    last_result = ""
+    last_confirmed_corruption = False
+    for attempt in range(1, max(1, attempts) + 1):
+        ok, result, confirmed_corruption = _check_quick(db_path)
+        if ok or confirmed_corruption or not _is_retryable_availability_error(result):
+            return ok, result, confirmed_corruption
+        last_result = result
+        last_confirmed_corruption = confirmed_corruption
+        write_audit_event(
+            "db_guard_retry",
+            baza_dir=baza_dir,
+            role=role,
+            details={"db_path": db_path, "attempt": attempt, "reason": result},
+        )
+        time.sleep(2.0)
+    return False, last_result, last_confirmed_corruption
+
+
+def _apply_network_safe_profile(db_path: str) -> dict[str, Any]:
+    conn = None
+    try:
+        uri = f"file:{db_path}?mode=rw"
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False, isolation_level=None, timeout=10.0)
+        configure_connection(conn, profile="network")
+        journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        synchronous = conn.execute("PRAGMA synchronous").fetchone()[0]
+        mmap_size = conn.execute("PRAGMA mmap_size").fetchone()[0]
+        return {
+            "db_profile": NETWORK_SAFE_DB_PROFILE,
+            "journal_mode": str(journal_mode).upper(),
+            "synchronous": synchronous,
+            "mmap_size": mmap_size,
+        }
+    finally:
+        if conn:
+            conn.close()
+
+
+def _apply_network_safe_profile_with_lock(
+    *,
+    baza_dir: str,
+    db_path: str,
+    role: Optional[str],
+    owner_id: str,
+) -> dict[str, Any]:
+    db_lock = None
+    db_heartbeat = None
+    try:
+        db_lock, db_heartbeat = _acquire_lock_with_wait(
+            os.path.join(baza_dir, "archiv", "db.lock"),
+            stale_timeout_sec=120,
+            wait_sec=DB_LOCK_WAIT_SEC,
+            owner_id=owner_id,
+            source="db_profile",
+            role=role,
+            baza_dir=baza_dir,
+        )
+        profile = _apply_network_safe_profile(db_path)
+        write_audit_event(
+            "sqlite_pragmas_applied",
+            baza_dir=baza_dir,
+            role=role,
+            details={"db_path": db_path, **profile},
+        )
+        return profile
+    finally:
+        _release_lock(db_lock, db_heartbeat)
+
+
+def _iter_recovery_candidates(baza_dir: str, db_path: str) -> list[str]:
+    dirs = [
+        os.path.join(baza_dir, "backups", "valid"),
+        os.path.join(baza_dir, "backups"),
+        os.path.join(baza_dir, "snapshots"),
+    ]
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for directory in dirs:
+        if not os.path.isdir(directory):
+            continue
+        for name in os.listdir(directory):
+            if not name.lower().endswith(".db"):
+                continue
+            full_path = os.path.join(directory, name)
+            if not os.path.isfile(full_path) or _same_path(full_path, db_path):
+                continue
+            key = os.path.normcase(os.path.abspath(full_path))
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(full_path)
+    candidates.sort(key=os.path.getmtime, reverse=True)
+    return candidates
+
+
+def _quarantine_invalid_candidate(candidate: str, baza_dir: str, reason: str, role: Optional[str]):
+    if not os.path.exists(candidate):
+        return
+    if os.path.normcase(os.path.abspath(candidate)).find(os.path.normcase(os.path.join(baza_dir, "snapshots"))) >= 0:
+        target_dir = os.path.join(baza_dir, "quarantine", "snapshots")
+    else:
+        target_dir = os.path.join(baza_dir, "backup_health", "invalid_backups")
+    os.makedirs(target_dir, exist_ok=True)
+    target = os.path.join(target_dir, f"invalid_{_now_stamp()}_{os.path.basename(candidate)}")
+    counter = 1
+    while os.path.exists(target):
+        target = os.path.join(target_dir, f"invalid_{_now_stamp()}_{counter}_{os.path.basename(candidate)}")
+        counter += 1
+    try:
+        os.replace(candidate, target)
+        candidate_meta = f"{candidate}.meta.json"
+        if os.path.exists(candidate_meta):
+            os.replace(candidate_meta, f"{target}.meta.json")
+        with open(f"{target}.reason.txt", "w", encoding="utf-8") as fh:
+            fh.write(f"time={datetime.now().isoformat()}\n")
+            fh.write(f"source={candidate}\n")
+            fh.write(f"reason={reason}\n")
+        write_audit_event(
+            "recovery_snapshot_rejected",
+            baza_dir=baza_dir,
+            role=role,
+            details={"candidate": candidate, "quarantine_path": target, "reason": reason},
+        )
+    except Exception as exc:
+        write_audit_event(
+            "recovery_snapshot_rejected",
+            baza_dir=baza_dir,
+            role=role,
+            details={"candidate": candidate, "reason": reason, "quarantine_error": str(exc)},
+        )
+
+
+def _select_latest_valid_source(baza_dir: str, db_path: str, role: Optional[str]) -> tuple[Optional[str], str]:
+    for candidate in _iter_recovery_candidates(baza_dir, db_path):
+        ok, reason = validate_sqlite_file(candidate)
+        if ok:
+            write_audit_event(
+                "recovery_snapshot_selected",
+                baza_dir=baza_dir,
+                role=role,
+                details={"source_path": candidate},
+            )
+            return candidate, "ok"
+        _quarantine_invalid_candidate(candidate, baza_dir, reason, role)
+    return None, "no valid backup or snapshot found"
+
+
+def _quarantine_current_db(db_path: str, baza_dir: str, role: Optional[str], context: dict[str, Any]) -> str:
+    quarantine_root = os.path.join(baza_dir, "quarantine", "shared_db", f"corrupted_{_now_stamp()}")
+    os.makedirs(quarantine_root, exist_ok=True)
+
+    moved: list[dict[str, str]] = []
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        source = f"{db_path}{suffix}"
+        if not os.path.exists(source):
+            continue
+        target = os.path.join(quarantine_root, os.path.basename(source))
+        os.replace(source, target)
+        moved.append({"source": source, "target": target})
+
+    context = dict(context)
+    context.update(
+        {
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "db_path": db_path,
+            "moved_files": moved,
+        }
+    )
+    with open(os.path.join(quarantine_root, "recovery_context.json"), "w", encoding="utf-8") as fh:
+        json.dump(context, fh, ensure_ascii=False, indent=2)
+
+    write_audit_event(
+        "quarantine_created",
+        baza_dir=baza_dir,
+        role=role,
+        details={"quarantine_path": quarantine_root, "moved_files": moved},
+    )
+    return quarantine_root
+
+
+def _quarantine_existing_db_sidecars(db_path: str, baza_dir: str, role: Optional[str], context: dict[str, Any]) -> str:
+    existing_paths = [f"{db_path}{suffix}" for suffix in ("", "-journal", "-wal", "-shm") if os.path.exists(f"{db_path}{suffix}")]
+    if not existing_paths:
+        return ""
+    return _quarantine_current_db(db_path, baza_dir, role, context)
+
+
+def _restore_from_source(source_path: str, db_path: str) -> str:
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    temp_path = f"{db_path}.restore_tmp_{os.getpid()}_{_now_stamp()}"
+    shutil.copy2(source_path, temp_path)
+    ok, reason = validate_sqlite_file(temp_path)
+    if not ok:
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+        raise RuntimeError(f"selected recovery source failed temp validation: {reason}")
+    os.replace(temp_path, db_path)
+    ok, reason = validate_sqlite_file(db_path)
+    if not ok:
+        raise RuntimeError(f"restored database failed validation: {reason}")
+    return db_path
+
+
+def _recover_shared_db(
+    *,
+    baza_dir: str,
+    db_path: str,
+    role: Optional[str],
+    failure_reason: str,
+) -> StartupDbGuardResult:
+    owner_id = f"{socket.gethostname()}:{os.getpid()}:startup_db_guard"
+    db_lock_path = os.path.join(baza_dir, "archiv", "db.lock")
+    db_lock = None
+    db_heartbeat = None
+    try:
+        db_lock, db_heartbeat = _acquire_lock_with_wait(
+            db_lock_path,
+            stale_timeout_sec=120,
+            wait_sec=DB_LOCK_WAIT_SEC,
+            owner_id=owner_id,
+            source="db_write",
+            role=role,
+            baza_dir=baza_dir,
+        )
+        ok_after_lock, check_after_lock, confirmed_after_lock = _check_quick_with_retries(
+            db_path,
+            baza_dir=baza_dir,
+            role=role,
+            attempts=2,
+        )
+        if ok_after_lock:
+            profile = _apply_network_safe_profile(db_path)
+            write_audit_event(
+                "db_guard_ok",
+                baza_dir=baza_dir,
+                role=role,
+                details={
+                    "db_path": db_path,
+                    "quick_check": "ok",
+                    "after_db_lock_recheck": True,
+                    **profile,
+                },
+            )
+            return StartupDbGuardResult(ok=True, baza_dir=baza_dir)
+
+        failure_reason = check_after_lock or failure_reason
+        if not confirmed_after_lock and not _is_missing_db_file(failure_reason):
+            write_audit_event(
+                "shared_db_auto_recovery_skipped",
+                baza_dir=baza_dir,
+                role=role,
+                details={
+                    "reason": failure_reason,
+                    "classification": "availability_or_lock",
+                },
+            )
+            return StartupDbGuardResult(
+                ok=False,
+                user_message=_availability_user_message(failure_reason),
+                technical_reason=failure_reason,
+                baza_dir=baza_dir,
+            )
+
+        source_path, select_reason = _select_latest_valid_source(baza_dir, db_path, role)
+        if not source_path:
+            write_audit_event(
+                "shared_db_auto_recovery_failed",
+                baza_dir=baza_dir,
+                role=role,
+                details={"reason": select_reason, "initial_failure": failure_reason},
+            )
+            return StartupDbGuardResult(
+                ok=False,
+                user_message="Не найдена рабочая копия базы. Работа временно недоступна. Сообщите ответственному.",
+                technical_reason=select_reason,
+                baza_dir=baza_dir,
+            )
+
+        quarantine_path = _quarantine_existing_db_sidecars(
+            db_path,
+            baza_dir,
+            role,
+            {
+                "event": "shared_db_auto_recovery_start",
+                "failure_reason": failure_reason,
+                "selected_source": source_path,
+                "host": socket.gethostname(),
+                "pid": os.getpid(),
+                "role": role,
+                "app_version": APP_VERSION,
+            },
+        )
+        _restore_from_source(source_path, db_path)
+        profile = _apply_network_safe_profile(db_path)
+        write_audit_event(
+            "sqlite_pragmas_applied",
+            baza_dir=baza_dir,
+            role=role,
+            details={"db_path": db_path, **profile},
+        )
+        write_audit_event(
+            "shared_db_auto_recovery_success",
+            baza_dir=baza_dir,
+            role=role,
+            details={
+                "restored_from": source_path,
+                "quarantine_path": quarantine_path,
+                "quick_check_after": "ok",
+                **profile,
+            },
+        )
+        return StartupDbGuardResult(
+            ok=True,
+            recovered=True,
+            user_message="База восстановлена из последней рабочей копии. Работа продолжена.",
+            restored_from=source_path,
+            quarantine_path=quarantine_path,
+            baza_dir=baza_dir,
+        )
+    except Exception as exc:
+        write_audit_event(
+            "shared_db_auto_recovery_failed",
+            baza_dir=baza_dir,
+            role=role,
+            details={"reason": str(exc), "initial_failure": failure_reason},
+        )
+        return StartupDbGuardResult(
+            ok=False,
+            user_message="Не удалось автоматически восстановить базу. Работа временно недоступна. Сообщите ответственному.",
+            technical_reason=str(exc),
+            baza_dir=baza_dir,
+        )
+    finally:
+        _release_lock(db_lock, db_heartbeat)
+
+
+def run_startup_db_guard(role: Optional[str] = None) -> StartupDbGuardResult:
+    try:
+        baza_dir = resolve_baza_dir()
+    except DataPathConfigurationError as exc:
+        return StartupDbGuardResult(ok=False, user_message=str(exc), technical_reason=str(exc))
+    except Exception as exc:
+        return StartupDbGuardResult(
+            ok=False,
+            user_message=f"Путь к {BAZA_DIR_NAME} недоступен. Запустите RemCardPathSetup.exe.",
+            technical_reason=str(exc),
+        )
+
+    if not is_baza_dir_name(baza_dir):
+        return StartupDbGuardResult(
+            ok=False,
+            user_message=f"Сохраненный путь должен указывать именно на папку {BAZA_DIR_NAME}.",
+            technical_reason=f"invalid baza dir name: {baza_dir}",
+            baza_dir=baza_dir,
+        )
+    if not os.path.isdir(baza_dir):
+        return StartupDbGuardResult(
+            ok=False,
+            user_message=f"Папка базы недоступна: {baza_dir}",
+            technical_reason=f"baza dir does not exist: {baza_dir}",
+            baza_dir=baza_dir,
+        )
+
+    try:
+        _ensure_guard_dirs(baza_dir)
+        write_audit_event("db_guard_start", baza_dir=baza_dir, role=role, details={"baza_dir": baza_dir})
+        _load_or_create_client_policy(baza_dir, role)
+    except Exception as exc:
+        write_audit_event(
+            "db_guard_failed",
+            baza_dir=baza_dir,
+            role=role,
+            details={"stage": "policy_or_dirs", "reason": str(exc)},
+        )
+        if isinstance(exc, StartupPolicyError):
+            return StartupDbGuardResult(
+                ok=False,
+                user_message=str(exc),
+                technical_reason=str(exc),
+                baza_dir=baza_dir,
+            )
+        return StartupDbGuardResult(
+            ok=False,
+            user_message="Не удалось подготовить защитный контур базы. Проверьте доступ к сетевой папке.",
+            technical_reason=str(exc),
+            baza_dir=baza_dir,
+        )
+
+    recovery_lock = None
+    recovery_heartbeat = None
+    owner_id = f"{socket.gethostname()}:{os.getpid()}:startup_db_guard"
+    recovery_lock_path = os.path.join(baza_dir, "locks", "recovery.lock")
+    db_path = get_journal_db_path(baza_dir)
+    try:
+        recovery_lock, recovery_heartbeat = _acquire_lock_with_wait(
+            recovery_lock_path,
+            stale_timeout_sec=RECOVERY_LOCK_STALE_SEC,
+            wait_sec=RECOVERY_LOCK_WAIT_SEC,
+            owner_id=owner_id,
+            source="recovery",
+            role=role,
+            baza_dir=baza_dir,
+        )
+
+        ok, result, confirmed_corruption = _check_quick_with_retries(
+            db_path,
+            baza_dir=baza_dir,
+            role=role,
+        )
+        if ok:
+            profile = _apply_network_safe_profile_with_lock(
+                baza_dir=baza_dir,
+                db_path=db_path,
+                role=role,
+                owner_id=owner_id,
+            )
+            write_audit_event(
+                "db_guard_ok",
+                baza_dir=baza_dir,
+                role=role,
+                details={"db_path": db_path, "quick_check": "ok", **profile},
+            )
+            return StartupDbGuardResult(ok=True, baza_dir=baza_dir)
+
+        if _is_missing_db_file(result):
+            write_audit_event(
+                "shared_db_missing_detected",
+                baza_dir=baza_dir,
+                role=role,
+                details={"db_path": db_path, "reason": result},
+            )
+            write_audit_event(
+                "shared_db_auto_recovery_start",
+                baza_dir=baza_dir,
+                role=role,
+                details={"db_path": db_path, "reason": result, "missing_db": True},
+            )
+            return _recover_shared_db(baza_dir=baza_dir, db_path=db_path, role=role, failure_reason=result)
+
+        if not confirmed_corruption:
+            write_audit_event(
+                "shared_db_unavailable",
+                baza_dir=baza_dir,
+                role=role,
+                details={"db_path": db_path, "reason": result},
+            )
+            return StartupDbGuardResult(
+                ok=False,
+                user_message=_availability_user_message(result),
+                technical_reason=result,
+                baza_dir=baza_dir,
+            )
+
+        write_audit_event(
+            "shared_db_corrupt_detected",
+            baza_dir=baza_dir,
+            role=role,
+            details={"db_path": db_path, "quick_check": result},
+        )
+        write_audit_event(
+            "shared_db_auto_recovery_start",
+            baza_dir=baza_dir,
+            role=role,
+            details={"db_path": db_path, "reason": result},
+        )
+        return _recover_shared_db(baza_dir=baza_dir, db_path=db_path, role=role, failure_reason=result)
+    except TimeoutError as exc:
+        write_audit_event(
+            "db_guard_failed",
+            baza_dir=baza_dir,
+            role=role,
+            details={"stage": "lock", "reason": str(exc)},
+        )
+        return StartupDbGuardResult(
+            ok=False,
+            user_message="База сейчас восстанавливается другим клиентом. Повторите запуск через несколько минут.",
+            technical_reason=str(exc),
+            baza_dir=baza_dir,
+        )
+    except Exception as exc:
+        write_audit_event(
+            "db_guard_failed",
+            baza_dir=baza_dir,
+            role=role,
+            details={"stage": "check_or_recovery", "reason": str(exc)},
+        )
+        return StartupDbGuardResult(
+            ok=False,
+            user_message="Не удалось проверить базу данных. Работа временно недоступна. Сообщите ответственному.",
+            technical_reason=str(exc),
+            baza_dir=baza_dir,
+        )
+    finally:
+        _release_lock(recovery_lock, recovery_heartbeat)

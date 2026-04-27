@@ -23,14 +23,17 @@ from rem_card.app.durable_sql_outbox import (
 )
 from rem_card.app.local_replica_sync import LocalReplicaSync
 from rem_card.app.paths import (
+    BACKUPS_VALID_DIR,
     CORRUPTED_DB_DIR,
     DB_LOCK_PATH,
     DB_ROTATION_LOCK_PATH,
+    INVALID_BACKUPS_DIR,
     LOCAL_CACHE_DIR,
     LOCAL_JOURNAL_OUTBOX_PATH,
     LOCAL_JOURNAL_REPLICA_PATH,
 )
 from rem_card.app.sqlite_shared import (
+    FileWriteLock,
     SQLiteWriteController,
     backup_connection,
     configure_connection,
@@ -152,6 +155,7 @@ class DBManager:
             db_path=self.db_path,
             archive_dir=os.path.dirname(self.db_path),
             rotation_lock_path=DB_ROTATION_LOCK_PATH,
+            db_lock_path=DB_LOCK_PATH,
             logger=self.logger,
             max_age_days=180,
         )
@@ -479,7 +483,7 @@ class DBManager:
                 isolation_level=None,
                 timeout=5.0,
             )
-            configure_connection(conn)
+            configure_connection(conn, readonly=True)
             ok, result = run_integrity_check(conn)
             if ok:
                 self.logger.info("Background integrity_check passed for %s", self.db_path)
@@ -526,6 +530,10 @@ class DBManager:
 
     def _connect_db(self):
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        profile_lock = FileWriteLock(DB_LOCK_PATH, stale_timeout_sec=10 * 60, logger=self.logger)
+        owner_id = f"{socket.gethostname()}:{os.getpid()}:journal_init"
+        if not profile_lock.acquire(owner_id=owner_id, source="connection_profile"):
+            raise sqlite3.OperationalError("Could not acquire db lock for connection profile")
         try:
             self.conn = sqlite3.connect(
                 self.db_path,
@@ -538,6 +546,8 @@ class DBManager:
             if is_database_unavailable_error(exc):
                 raise notify_database_unavailable(exc, context="journal_init", logger=self.logger) from exc
             raise
+        finally:
+            profile_lock.release()
 
     def _reconnect(self):
         if self.conn:
@@ -758,12 +768,19 @@ class DBManager:
         if not self.conn:
             return None
 
-        os.makedirs(BACKUP_DIR, exist_ok=True)
+        os.makedirs(BACKUPS_VALID_DIR, exist_ok=True)
         db_name = os.path.splitext(os.path.basename(self.db_path))[0]
         backup_name = f"{prefix}_{db_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        backup_path = os.path.join(BACKUP_DIR, backup_name)
+        backup_path = os.path.join(BACKUPS_VALID_DIR, backup_name)
         try:
-            backup_connection(self.conn, backup_path)
+            backup_connection(
+                self.conn,
+                backup_path,
+                invalid_dir=INVALID_BACKUPS_DIR,
+                logger=self.logger,
+                lock_path=DB_LOCK_PATH,
+                source=f"{prefix}_backup",
+            )
             self._rotate_backups()
             self._last_backup_ts = time.time()
             self.logger.info("%s backup created (%s): %s", prefix.capitalize(), source, backup_path)
@@ -891,14 +908,21 @@ class DBManager:
             self.logger.error("Error checking for backup: %s", exc)
 
     def create_backup(self):
-        os.makedirs(BACKUP_DIR, exist_ok=True)
+        os.makedirs(BACKUPS_VALID_DIR, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         db_filename = os.path.basename(self.db_path)
         backup_filename = f"backup_{timestamp}_{db_filename}"
-        backup_path = os.path.join(BACKUP_DIR, backup_filename)
+        backup_path = os.path.join(BACKUPS_VALID_DIR, backup_filename)
 
         try:
-            backup_connection(self.conn, backup_path)
+            backup_connection(
+                self.conn,
+                backup_path,
+                invalid_dir=INVALID_BACKUPS_DIR,
+                logger=self.logger,
+                lock_path=DB_LOCK_PATH,
+                source="manual_backup",
+            )
             self._rotate_backups()
             return True, f"Резервная копия успешно создана:\n{backup_path}"
         except Exception as exc:

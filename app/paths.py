@@ -87,10 +87,18 @@ ARCHIV_DIR = os.path.join(BAZA_DIR, "archiv")
 REM_CARD_DIR = os.path.join(BAZA_DIR, "rem_card")
 REPORT_DIR = os.path.join(BAZA_DIR, "report")
 BACKUPS_RC_DIR = os.path.join(BAZA_DIR, "backups")
+BACKUPS_VALID_DIR = os.path.join(BACKUPS_RC_DIR, "valid")
+SNAPSHOTS_DIR = os.path.join(BAZA_DIR, "snapshots")
 CORRUPTED_DB_DIR = os.path.join(BAZA_DIR, "corrupted_db")
 BACKUP_HEALTH_DIR = os.path.join(BAZA_DIR, "backup_health")
 BACKUP_VALIDATION_REPORTS_DIR = os.path.join(BACKUP_HEALTH_DIR, "reports")
 INVALID_BACKUPS_DIR = os.path.join(BACKUP_HEALTH_DIR, "invalid_backups")
+CONFIG_DIR = os.path.join(BAZA_DIR, "config")
+LOCKS_DIR = os.path.join(BAZA_DIR, "locks")
+CLIENT_POLICY_PATH = os.path.join(CONFIG_DIR, "client_policy.json")
+QUARANTINE_DIR = os.path.join(BAZA_DIR, "quarantine")
+SHARED_DB_QUARANTINE_DIR = os.path.join(QUARANTINE_DIR, "shared_db")
+SNAPSHOT_QUARANTINE_DIR = os.path.join(QUARANTINE_DIR, "snapshots")
 ROLE_LOCKS_DIR = os.path.join(BAZA_DIR, "session_locks")
 DB_CYCLE_ARCHIVE_DIR = os.path.join(ARCHIV_DIR, "db_cycle_archive")
 
@@ -103,6 +111,7 @@ REMCARD_DB_PATH = JOURNAL_DB_PATH
 LEGACY_REMCARD_DB_PATH = os.path.join(REM_CARD_DIR, "rem_cards_data.db")
 DB_LOCK_PATH = os.path.join(ARCHIV_DIR, "db.lock")
 DB_ROTATION_LOCK_PATH = os.path.join(ARCHIV_DIR, "db_rotation.lock")
+RECOVERY_LOCK_PATH = os.path.join(LOCKS_DIR, "recovery.lock")
 
 LOCAL_APPDATA = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
 LOCAL_CACHE_DIR = os.path.join(LOCAL_APPDATA, "RemCard", "cache")
@@ -129,10 +138,17 @@ def ensure_directories():
         REM_CARD_DIR,
         REPORT_DIR,
         BACKUPS_RC_DIR,
+        BACKUPS_VALID_DIR,
+        SNAPSHOTS_DIR,
         CORRUPTED_DB_DIR,
         BACKUP_HEALTH_DIR,
         BACKUP_VALIDATION_REPORTS_DIR,
         INVALID_BACKUPS_DIR,
+        CONFIG_DIR,
+        LOCKS_DIR,
+        QUARANTINE_DIR,
+        SHARED_DB_QUARANTINE_DIR,
+        SNAPSHOT_QUARANTINE_DIR,
         ROLE_LOCKS_DIR,
         DB_CYCLE_ARCHIVE_DIR,
     ]
