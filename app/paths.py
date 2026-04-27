@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 
 from rem_card.app.runtime_paths import (
@@ -55,11 +56,48 @@ def get_base_dir() -> str:
     else:
         return get_project_root()
 
+def _project_dictionaries_dir() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "dictionaries"))
+
+def _compiled_external_dictionaries_dir() -> str:
+    return os.path.join(get_executable_dir(), "rem_card", "data", "dictionaries")
+
+def _compiled_bundled_dictionaries_dir() -> str:
+    return os.path.join(get_resources_dir(), "rem_card", "data", "dictionaries")
+
+def _copy_missing_json_files(source_dir: str, target_dir: str):
+    if not os.path.isdir(source_dir):
+        return
+
+    os.makedirs(target_dir, exist_ok=True)
+    for name in sorted(os.listdir(source_dir)):
+        source_path = os.path.join(source_dir, name)
+        if not os.path.isfile(source_path) or not name.lower().endswith(".json"):
+            continue
+
+        target_path = os.path.join(target_dir, name)
+        if os.path.exists(target_path):
+            continue
+
+        shutil.copy2(source_path, target_path)
+
+def ensure_external_dictionaries_initialized() -> str:
+    """
+    В compiled-режиме _internal хранит базовые словари из сборки, а рабочие
+    словари лежат рядом с exe и могут редактироваться пользователем.
+    """
+    if not is_compiled():
+        return _project_dictionaries_dir()
+
+    target_dir = _compiled_external_dictionaries_dir()
+    os.makedirs(target_dir, exist_ok=True)
+    _copy_missing_json_files(_compiled_bundled_dictionaries_dir(), target_dir)
+    return target_dir
+
 def get_seed_dir() -> str:
     if is_compiled():
-        return os.path.join(get_resources_dir(), "rem_card", "data", "dictionaries")
-    else:
-        return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "dictionaries"))
+        return ensure_external_dictionaries_initialized()
+    return _project_dictionaries_dir()
 
 def get_icon_dir() -> str:
     if is_compiled():
@@ -68,8 +106,6 @@ def get_icon_dir() -> str:
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "icon"))
 
 def get_user_dict_dir() -> str:
-    if is_compiled():
-        return os.path.join(get_executable_dir(), "rem_card", "data", "dictionaries")
     return get_seed_dir()
 
 NETWORK_ROOT = get_base_dir()
