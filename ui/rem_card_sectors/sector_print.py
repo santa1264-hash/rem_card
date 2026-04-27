@@ -14,7 +14,7 @@ from PySide6.QtGui import QDesktopServices
 from rem_card.app.logger import logger
 from rem_card.ui.shared.base_sector import BaseSectorWidget
 from rem_card.ui.shared.custom_message_box import CustomMessageBox
-from rem_card.services.balance_calculator import BalanceCalculator
+from rem_card.services.report_balance import build_print_balance_final
 from rem_card.services.report_vitals_slotting import select_latest_vitals_by_report_hour
 from rem_card.data.dto.remcard_dto import AdministrationDTO
 from rem_card.ui.rem_card_sectors.s_print.death_outcome import build_death_outcome_struct
@@ -309,10 +309,12 @@ class DataCollectorWorker(QThread):
             
             for a in order_admins_rows:
                 p_time = datetime.datetime.fromisoformat(str(a['planned_time']).replace(" ", "T"))
+                actual_raw = a.get('actual_time')
+                actual_time = datetime.datetime.fromisoformat(str(actual_raw).replace(" ", "T")) if actual_raw else None
                 admin_dto = AdministrationDTO(
                     id=a['id'], order_id=o.id, chain_id=a.get('chain_id'),
                     big_chain_id=a.get('big_chain_id'), cell_role=a.get('cell_role', 'single'),
-                    planned_time=p_time, status=a.get('status', 'planned'),
+                    planned_time=p_time, actual_time=actual_time, status=a.get('status', 'planned'),
                     volume_ml=a.get('volume_ml', 0.0), comment=a.get('comment', '')
                 )
                 o.administrations.append(admin_dto)
@@ -331,40 +333,17 @@ class DataCollectorWorker(QThread):
         data["prescriptions_matrix"] = prescriptions_matrix
 
         # 3. БАЛАНС
-        balance_res = BalanceCalculator.calculate(orders, current_time, end_dt)
-        oral_cur = 0
-        oral_day = 0
         admission_id = data.get("admission_id") or data.get("id")
-        if config.get("balance", True) and admission_id and hasattr(remcard_service, "get_oral_intake_totals"):
-            try:
-                oral_totals = remcard_service.get_oral_intake_totals(admission_id, start_dt, current_time=current_time)
-                oral_cur = oral_totals.get("current", 0) or 0
-                oral_day = oral_totals.get("daily", 0) or 0
-            except Exception as exc:
-                logger.warning("Failed to load oral intake totals for print balance: %s", exc)
-        balance_res["current"]["oral"] = round(oral_cur, 1)
-        balance_res["daily"]["oral"] = round(oral_day, 1)
-        balance_res["current"]["total"] = round((balance_res["current"].get("total", 0) or 0) + oral_cur, 1)
-        balance_res["daily"]["total"] = round((balance_res["daily"].get("total", 0) or 0) + oral_day, 1)
-        fluids = data.get("fluids_raw", [])
-        f_detail_cur = {"urine": 0, "drain": 0, "ng": 0, "stool": 0, "other": 0}
-        f_detail_full = {"urine": 0, "drain": 0, "ng": 0, "stool": 0, "other": 0}
-        out_hourly = {} 
-
-        for f in fluids:
-            idx = int((f.timestamp - start_dt).total_seconds() / 3600)
-            if 0 <= idx < 24:
-                if idx not in out_hourly: out_hourly[idx] = {"urine":0, "drain":0, "ng":0, "stool":0, "other":0}
-                for k, fk in [("urine","urine"), ("drain","drain_output"), ("ng","ng_output"), ("stool","stool"), ("other","other_output")]:
-                    val = getattr(f, fk, 0) or 0
-                    out_hourly[idx][k] += val
-                    if f.timestamp <= current_time: f_detail_cur[k] += val
-                    f_detail_full[k] += val
-        
-        data["balance_final"] = {
-            "current": balance_res["current"], "full": balance_res["daily"],
-            "out_cur": f_detail_cur, "out_full": f_detail_full, "out_hourly": out_hourly
-        }
+        data["balance_final"] = build_print_balance_final(
+            orders=orders,
+            fluids=data.get("fluids_raw", []),
+            remcard_service=remcard_service,
+            config=config,
+            admission_id=admission_id,
+            start_dt=start_dt,
+            current_time=current_time,
+            end_dt=end_dt,
+        )
 
         # 4. СОБЫТИЯ
         events = data.get("events", [])

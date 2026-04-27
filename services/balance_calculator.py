@@ -1,5 +1,6 @@
 ﻿import re
 import time
+import threading
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 from ..data.dto.remcard_dto import OrderDTO, AdministrationDTO, OrderStatus
@@ -11,6 +12,7 @@ class BalanceCalculator:
 
     _engine_reload_interval_sec = 10.0
     _engine_last_reload_mono = 0.0
+    _engine_reload_lock = threading.Lock()
 
     @staticmethod
     def _normalize_unit_token(token: str) -> str:
@@ -186,11 +188,15 @@ class BalanceCalculator:
         now_mono = time.monotonic()
         if (now_mono - cls._engine_last_reload_mono) < cls._engine_reload_interval_sec:
             return
-        cls._engine_last_reload_mono = now_mono
-        try:
-            engine.reload()
-        except Exception:
-            pass
+        with cls._engine_reload_lock:
+            now_mono = time.monotonic()
+            if (now_mono - cls._engine_last_reload_mono) < cls._engine_reload_interval_sec:
+                return
+            cls._engine_last_reload_mono = now_mono
+            try:
+                engine.reload()
+            except Exception:
+                pass
 
     @classmethod
     def calculate(cls, orders: List[OrderDTO], current_time: datetime, end_of_card: datetime, 
@@ -258,6 +264,259 @@ class BalanceCalculator:
             res[p]["total"] = round(sum(res[p][k] for k in ["infusion", "preparats", "blood", "plasma"]), 1)
 
         return res
+
+    @classmethod
+    def calculate_hourly_actual_input(
+        cls,
+        orders: List[OrderDTO],
+        start_time: datetime,
+        current_time: datetime,
+        end_of_card: datetime,
+        transfer_time: Optional[datetime] = None,
+        outcome_time: Optional[datetime] = None,
+    ) -> Dict[int, Dict[str, float]]:
+        """Builds hourly actual input buckets for print reports."""
+        hourly = {
+            i: {"infusion": 0.0, "preparats": 0.0, "blood": 0.0, "plasma": 0.0}
+            for i in range(24)
+        }
+        if current_time < start_time:
+            return hourly
+
+        daily_limit = end_of_card
+        valid_transfer = transfer_time and transfer_time.year > 2020
+        terminal_time = outcome_time if outcome_time else (transfer_time if valid_transfer else None)
+        if terminal_time:
+            terminal_time = terminal_time + timedelta(hours=1)
+        if terminal_time and terminal_time < daily_limit:
+            daily_limit = terminal_time
+
+        period_end = min(current_time, daily_limit, start_time + timedelta(hours=24))
+        if period_end <= start_time:
+            return hourly
+
+        cls._maybe_reload_engine()
+
+        for order in orders or []:
+            status_val = getattr(getattr(order, "status", None), "value", getattr(order, "status", None))
+            if str(status_val) in ("deleted", "cancelled"):
+                continue
+            if getattr(order, "is_committed", 1) == 0:
+                continue
+
+            inf_v, prep_v, cat = cls.get_order_volumes(order)
+            if (inf_v + prep_v) <= 0:
+                continue
+
+            chains = {}
+            singles = []
+            for admin in getattr(order, "administrations", []) or []:
+                admin_status = str(getattr(admin, "status", "") or "")
+                if admin_status in ("deleted", "cancelled"):
+                    continue
+                if getattr(admin, "big_chain_id", None):
+                    chains.setdefault(admin.big_chain_id, []).append(admin)
+                else:
+                    singles.append(admin)
+
+            for admin in singles:
+                cls._add_single_actual_to_hourly(
+                    hourly, start_time, period_end, daily_limit, order, admin, inf_v, prep_v, cat
+                )
+
+            for admins in chains.values():
+                admins.sort(key=lambda item: item.planned_time)
+                cls._add_chain_actual_to_hourly(
+                    hourly, start_time, period_end, daily_limit, order, admins, inf_v, prep_v, cat
+                )
+
+        for bucket in hourly.values():
+            for key in ("infusion", "preparats", "blood", "plasma"):
+                bucket[key] = round(bucket[key], 1)
+        return hourly
+
+    @classmethod
+    def _add_single_actual_to_hourly(cls, hourly, start_time, period_end, daily_limit, order, admin, inf_v, prep_v, cat):
+        if cls._admin_mark(admin) != "nurse_executed":
+            return
+
+        fact_time = getattr(admin, "actual_time", None) or admin.planned_time
+        if fact_time > period_end or fact_time >= daily_limit:
+            return
+
+        dur = float(getattr(order, "duration_min", 0) or 0)
+        if dur <= 0:
+            cls._add_point_to_hourly(hourly, start_time, fact_time, inf_v, prep_v, cat)
+            return
+
+        interval_end = min(fact_time + timedelta(minutes=dur), period_end, daily_limit)
+        cls._add_interval_to_hourly(hourly, start_time, fact_time, interval_end, inf_v, prep_v, cat)
+
+    @classmethod
+    def _add_chain_actual_to_hourly(cls, hourly, start_time, period_end, daily_limit, order, admins, inf_v, prep_v, cat):
+        if not admins:
+            return
+
+        if cls._chain_has_segment_marks(admins):
+            cls._add_segmented_chain_actual_to_hourly(
+                hourly, start_time, period_end, daily_limit, order, admins, inf_v, prep_v, cat
+            )
+            return
+
+        executed_times = [
+            (getattr(admin, "actual_time", None) or admin.planned_time)
+            for admin in admins
+            if cls._admin_mark(admin) == "nurse_executed"
+        ]
+        if not any(fact_time <= period_end for fact_time in executed_times):
+            return
+
+        start_of_chain = admins[0].planned_time
+        dur_val = float(getattr(order, "duration_min", 0) or 0)
+        if dur_val > 0:
+            total_dur_min = dur_val
+            chain_end = min(start_of_chain + timedelta(minutes=dur_val), daily_limit)
+        else:
+            total_dur_min = (daily_limit - start_of_chain).total_seconds() / 60.0
+            chain_end = daily_limit
+
+        if total_dur_min <= 0:
+            return
+
+        speed_inf = inf_v / total_dur_min
+        speed_prep = prep_v / total_dur_min
+
+        for admin in admins:
+            if cls._admin_mark(admin) == "nurse_not_executed":
+                continue
+            q_start = admin.planned_time
+            if q_start > period_end or q_start >= daily_limit or q_start >= chain_end:
+                continue
+            q_end = min(q_start + timedelta(hours=1), period_end, daily_limit, chain_end)
+            active_min = max(0.0, (q_end - q_start).total_seconds() / 60.0)
+            if active_min <= 0:
+                continue
+            cls._add_interval_to_hourly(
+                hourly,
+                start_time,
+                q_start,
+                q_end,
+                speed_inf * active_min,
+                speed_prep * active_min,
+                cat,
+            )
+
+    @classmethod
+    def _add_segmented_chain_actual_to_hourly(cls, hourly, start_time, period_end, daily_limit, order, admins, inf_v, prep_v, cat):
+        start_of_chain, chain_end = cls._chain_bounds(order, admins, daily_limit)
+        if chain_end <= start_of_chain or period_end <= start_of_chain:
+            return
+
+        effective_period_end = min(period_end, chain_end)
+        stop_times = [
+            admin.planned_time
+            for admin in admins
+            if cls._admin_mark(admin) == "nurse_not_executed"
+            and start_of_chain <= admin.planned_time < chain_end
+        ]
+        stop_time = min(stop_times) if stop_times else None
+
+        has_executed_fact = any(
+            cls._admin_mark(admin) == "nurse_executed"
+            and getattr(admin, "cell_role", "") in ("start", "single", "body")
+            and (getattr(admin, "actual_time", None) or admin.planned_time) <= effective_period_end
+            for admin in admins
+        )
+        has_stop_fact = bool(stop_time and start_of_chain < stop_time <= effective_period_end)
+        if not has_executed_fact and not has_stop_fact:
+            return
+        if stop_time is not None and stop_time <= start_of_chain:
+            return
+
+        replacement_times = sorted(
+            admin.planned_time
+            for admin in admins
+            if cls._admin_mark(admin) == "nurse_executed"
+            and getattr(admin, "cell_role", "") == "body"
+            and start_of_chain < admin.planned_time < chain_end
+        )
+
+        segment_start = start_of_chain
+        boundary_limit = min(effective_period_end, stop_time) if stop_time is not None else effective_period_end
+        for replacement_time in replacement_times:
+            if replacement_time > boundary_limit:
+                break
+            if replacement_time <= segment_start:
+                continue
+            cls._add_interval_to_hourly(hourly, start_time, segment_start, replacement_time, inf_v, prep_v, cat)
+            segment_start = replacement_time
+
+        active_end = stop_time if stop_time is not None and stop_time <= effective_period_end else effective_period_end
+        cls._add_segment_partial_to_hourly(
+            hourly, start_time, segment_start, active_end, chain_end, inf_v, prep_v, cat
+        )
+
+    @classmethod
+    def _add_segment_partial_to_hourly(cls, hourly, start_time, segment_start, active_end, segment_end, inf_v, prep_v, cat):
+        if active_end <= segment_start or segment_end <= segment_start:
+            return
+        active_end = min(active_end, segment_end)
+        active_min = max(0.0, (active_end - segment_start).total_seconds() / 60.0)
+        segment_min = max(1.0, (segment_end - segment_start).total_seconds() / 60.0)
+        ratio = max(0.0, min(1.0, active_min / segment_min))
+        if ratio <= 0:
+            return
+        cls._add_interval_to_hourly(
+            hourly,
+            start_time,
+            segment_start,
+            active_end,
+            inf_v * ratio,
+            prep_v * ratio,
+            cat,
+        )
+
+    @classmethod
+    def _add_point_to_hourly(cls, hourly, start_time, moment, inf_v, prep_v, cat):
+        idx = int((moment - start_time).total_seconds() // 3600)
+        if 0 <= idx < 24:
+            cls._add_vol_to_hourly_bucket(hourly[idx], inf_v, prep_v, cat)
+
+    @classmethod
+    def _add_interval_to_hourly(cls, hourly, start_time, interval_start, interval_end, inf_v, prep_v, cat):
+        if interval_end <= interval_start:
+            return
+
+        report_start = start_time
+        report_end = start_time + timedelta(hours=24)
+        visible_start = max(interval_start, report_start)
+        visible_end = min(interval_end, report_end)
+        if visible_end <= visible_start:
+            return
+
+        total_seconds = max(1.0, (interval_end - interval_start).total_seconds())
+        cursor = visible_start
+        while cursor < visible_end:
+            idx = int((cursor - start_time).total_seconds() // 3600)
+            if idx < 0:
+                cursor = start_time
+                continue
+            if idx >= 24:
+                break
+            bucket_end = min(visible_end, start_time + timedelta(hours=idx + 1))
+            part_seconds = max(0.0, (bucket_end - cursor).total_seconds())
+            if part_seconds > 0:
+                ratio = part_seconds / total_seconds
+                cls._add_vol_to_hourly_bucket(hourly[idx], inf_v * ratio, prep_v * ratio, cat)
+            cursor = bucket_end
+
+    @staticmethod
+    def _add_vol_to_hourly_bucket(bucket, inf_v, prep_v, cat):
+        if cat in ("blood", "plasma"):
+            bucket[cat] += (inf_v + prep_v)
+        else:
+            bucket["infusion"] += inf_v
+            bucket["preparats"] += prep_v
 
     @classmethod
     def _process_item_daily(cls, res, order, admin, inf_v, prep_v, total_v, cat, daily_limit, is_draft):

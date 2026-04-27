@@ -56,6 +56,10 @@ class DietIntakeWidget(QWidget):
         self._draft_diet_text: Optional[str] = None
         self._suppress_template_change = False
         self._external_sector_header = False
+        self._sync_prn_pending = False
+        self._destroyed = False
+        self._fact_undo_stack = []
+        self.destroyed.connect(self._mark_destroyed)
 
         self._build_ui()
 
@@ -258,6 +262,7 @@ class DietIntakeWidget(QWidget):
 
     def set_service(self, service):
         self.service = service
+        self._fact_undo_stack = []
         self.refresh_data()
 
     def set_read_only(self, read_only: bool):
@@ -269,6 +274,7 @@ class DietIntakeWidget(QWidget):
             return
         self.admission_id = int(admission_id) if admission_id else None
         self.shift_date = shift_date
+        self._fact_undo_stack = []
         self._reset_draft()
         self.refresh_data()
 
@@ -324,8 +330,14 @@ class DietIntakeWidget(QWidget):
         self.btn_add_plan_time.setVisible(can_edit_plan)
         self.btn_save.setVisible(can_edit_plan or can_edit_fact)
         self.btn_cancel.setVisible(can_edit_plan or can_edit_fact)
-        self.btn_cancel.setText("Отмена")
-        self.btn_cancel.setEnabled(can_edit_plan or can_edit_fact)
+        if is_nurse:
+            self.btn_cancel.setText("Отменить последнее")
+            self.btn_cancel.setToolTip("Отменяет последнее сохраненное изменение в секторе перорального ввода")
+            self.btn_cancel.setEnabled(can_edit_fact and bool(self._fact_undo_stack))
+        else:
+            self.btn_cancel.setText("Отмена")
+            self.btn_cancel.setToolTip("")
+            self.btn_cancel.setEnabled(can_edit_plan)
 
         if is_doctor or is_nurse:
             self._fill_templates()
@@ -361,46 +373,81 @@ class DietIntakeWidget(QWidget):
             self.empty_label.setText(text)
         else:
             self.empty_label.setText("")
-        self._sync_prn_alignment()
-        QTimer.singleShot(0, self._sync_prn_alignment)
+        self._schedule_sync_prn_alignment()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._schedule_sync_prn_alignment()
+
+    def _mark_destroyed(self, *_args):
+        self._destroyed = True
+        self._sync_prn_pending = False
+
+    @staticmethod
+    def _is_qobject_alive(obj) -> bool:
+        if obj is None:
+            return False
+        try:
+            import shiboken6  # type: ignore
+
+            return bool(shiboken6.isValid(obj))
+        except Exception:
+            return True
+
+    def _schedule_sync_prn_alignment(self):
+        if self._destroyed or self._sync_prn_pending or not self._is_qobject_alive(self):
+            return
+        self._sync_prn_pending = True
+        QTimer.singleShot(0, self._run_scheduled_sync_prn_alignment)
+
+    def _run_scheduled_sync_prn_alignment(self):
+        self._sync_prn_pending = False
+        if self._destroyed or not self._is_qobject_alive(self):
+            return
         self._sync_prn_alignment()
 
     def _sync_prn_alignment(self):
-        if not hasattr(self, "prn_frame") or not self.prn_frame.isVisible():
+        required = ("prn_frame", "prn_time", "prn_amount", "prn_label", "rows_widget")
+        if any(not hasattr(self, name) or not self._is_qobject_alive(getattr(self, name)) for name in required):
+            return
+        if not self.prn_frame.isVisible():
             return
 
-        plan_x = self._table_column_x(1, fallback=80)
-        fact_x = self._table_column_x(2, fallback=plan_x + self.prn_time.width() + 15)
-        field_y = max(4, (self.prn_frame.height() - self.prn_time.height()) // 2)
+        try:
+            plan_x = self._table_column_x(1, fallback=80)
+            fact_x = self._table_column_x(2, fallback=plan_x + self.prn_time.width() + 15)
+            field_y = max(4, (self.prn_frame.height() - self.prn_time.height()) // 2)
 
-        self.prn_time.move(plan_x, field_y)
-        self.prn_amount.move(fact_x, field_y)
+            self.prn_time.move(plan_x, field_y)
+            self.prn_amount.move(fact_x, field_y)
 
-        label_x = 2
-        label_width = max(0, plan_x - label_x - 4)
-        label_height = self.prn_time.height()
-        label_y = field_y
-        self.prn_label.setGeometry(label_x, label_y, label_width, label_height)
+            label_x = 2
+            label_width = max(0, plan_x - label_x - 4)
+            label_height = self.prn_time.height()
+            label_y = field_y
+            self.prn_label.setGeometry(label_x, label_y, label_width, label_height)
+        except RuntimeError:
+            return
 
     def _table_column_x(self, column: int, *, fallback: int) -> int:
-        frame_x = self.prn_frame.mapTo(self, QPoint(0, 0)).x()
-        for row in range(1, max(2, self.rows_layout.rowCount() + 1)):
-            item = self.rows_layout.itemAtPosition(row, column)
+        try:
+            frame_x = self.prn_frame.mapTo(self, QPoint(0, 0)).x()
+            for row in range(1, max(2, self.rows_layout.rowCount() + 1)):
+                item = self.rows_layout.itemAtPosition(row, column)
+                widget = item.widget() if item else None
+                if widget is not None and self._is_qobject_alive(widget):
+                    return widget.mapTo(self, QPoint(0, 0)).x() - frame_x
+
+            item = self.rows_layout.itemAtPosition(0, column)
             widget = item.widget() if item else None
-            if widget is not None:
+            if widget is not None and self._is_qobject_alive(widget):
                 return widget.mapTo(self, QPoint(0, 0)).x() - frame_x
 
-        item = self.rows_layout.itemAtPosition(0, column)
-        widget = item.widget() if item else None
-        if widget is not None:
-            return widget.mapTo(self, QPoint(0, 0)).x() - frame_x
-
-        rect = self.rows_layout.cellRect(0, column)
-        if rect.isValid():
-            return self.rows_widget.mapTo(self, rect.topLeft()).x() - frame_x
+            rect = self.rows_layout.cellRect(0, column)
+            if rect.isValid() and self._is_qobject_alive(self.rows_widget):
+                return self.rows_widget.mapTo(self, rect.topLeft()).x() - frame_x
+        except RuntimeError:
+            return int(fallback)
         return int(fallback)
 
     def _fill_templates(self):
@@ -558,7 +605,7 @@ class DietIntakeWidget(QWidget):
         if not self.service or not self.admission_id or not self.shift_date or self.read_only:
             return
         try:
-            changes = []
+            changes_by_key = {}
             for record in self._fact_fields:
                 field = record["field"]
                 text = field.text().strip()
@@ -568,18 +615,19 @@ class DietIntakeWidget(QWidget):
                     continue
                 if original is not None and amount is not None and abs(float(original) - float(amount)) < 0.001:
                     continue
-                changes.append(
-                    {
-                        "event_dt": record["event_dt"],
-                        "amount": amount,
-                        "expected_version": getattr(record["event"], "version", None),
-                    }
+                self._add_fact_change(
+                    changes_by_key,
+                    record["event_dt"],
+                    amount,
+                    record["event"],
                 )
 
             prn_text = self.prn_amount.text().strip()
             if prn_text:
                 prn_dt = self.service.resolve_datetime(self.prn_time.text().strip(), self.shift_date)
-                changes.append({"event_dt": prn_dt, "amount": float(prn_text), "expected_version": None})
+                prn_event = self._event_for_time(prn_dt)
+                self._add_fact_change(changes_by_key, prn_dt, float(prn_text), prn_event)
+            changes = list(changes_by_key.values())
         except Exception as exc:
             self._show_error(exc)
             return
@@ -597,36 +645,90 @@ class DietIntakeWidget(QWidget):
                     change["amount"],
                     expected_version=change["expected_version"],
                 )
+            self._push_fact_undo(changes)
             return result
 
         self._enqueue_write("oral_intake_save", op)
 
     def _secondary_action(self):
-        self._cancel_changes()
+        if self.role == "nurse":
+            self._undo_last_fact()
+        else:
+            self._cancel_changes()
 
     def _cancel_changes(self):
         self._reset_draft()
         self.refresh_data()
 
     def _undo_last_fact(self):
-        if not self.service or not self.admission_id or not self._events or self.read_only:
+        if not self.service or not self.admission_id or not self.shift_date or self.read_only:
             return
-        event = max(
-            self._events,
-            key=lambda item: (
-                str(getattr(item, "created_at", "") or getattr(item, "updated_at", "")),
-                getattr(item, "event_time", datetime.min),
-            ),
-        )
+        if not self._fact_undo_stack:
+            return
+        undo_batch = self._fact_undo_stack[-1]
 
         def op():
-            return self.service.delete_oral_intake_event(
-                self.admission_id,
-                event.event_time,
-                expected_version=getattr(event, "version", None),
-            )
+            current_events = self.service.get_oral_intake_events(self.admission_id, self.shift_date)
+            result = None
+            for change in reversed(undo_batch):
+                current_event = self._event_for_time_in(current_events, change["event_dt"])
+                expected_version = getattr(current_event, "version", None)
+                if change["before_amount"] is None:
+                    if current_event is None:
+                        continue
+                    result = self.service.delete_oral_intake_event(
+                        self.admission_id,
+                        change["event_dt"],
+                        expected_version=expected_version,
+                    )
+                else:
+                    result = self.service.upsert_oral_intake_event(
+                        self.admission_id,
+                        change["event_dt"],
+                        change["before_amount"],
+                        expected_version=expected_version,
+                    )
+            self._fact_undo_stack.pop()
+            return result
 
         self._enqueue_write("oral_intake_undo_last", op)
+
+    def _add_fact_change(self, changes_by_key: dict, event_dt: datetime, amount: Optional[float], event):
+        key = self._event_key(event_dt)
+        before_amount = None if event is None else float(getattr(event, "amount_ml", 0.0) or 0.0)
+        if before_amount is None and amount is None:
+            return
+        if before_amount is not None and amount is not None and abs(float(before_amount) - float(amount)) < 0.001:
+            return
+        existing = changes_by_key.get(key)
+        if existing:
+            existing["amount"] = amount
+            if (
+                existing["before_amount"] is None
+                and existing["amount"] is None
+                or existing["before_amount"] is not None
+                and existing["amount"] is not None
+                and abs(float(existing["before_amount"]) - float(existing["amount"])) < 0.001
+            ):
+                changes_by_key.pop(key, None)
+            return
+        changes_by_key[key] = {
+            "event_dt": event_dt.replace(second=0, microsecond=0),
+            "amount": amount,
+            "expected_version": getattr(event, "version", None),
+            "before_amount": before_amount,
+        }
+
+    def _push_fact_undo(self, changes: list[dict]):
+        undo_batch = [
+            {"event_dt": change["event_dt"], "before_amount": change["before_amount"]}
+            for change in changes
+        ]
+        if not undo_batch:
+            return
+        self._fact_undo_stack.append(undo_batch)
+        if len(self._fact_undo_stack) > 20:
+            self._fact_undo_stack = self._fact_undo_stack[-20:]
 
     def _enqueue_write(self, description: str, operation):
         try:
@@ -659,8 +761,15 @@ class DietIntakeWidget(QWidget):
         self.prn_amount.clear()
 
     def _event_for_time(self, event_dt: datetime):
-        key = event_dt.strftime("%Y-%m-%d %H:%M")
-        for event in self._events:
+        return self._event_for_time_in(self._events, event_dt)
+
+    @staticmethod
+    def _event_key(event_dt: datetime) -> str:
+        return event_dt.replace(second=0, microsecond=0).strftime("%Y-%m-%d %H:%M")
+
+    def _event_for_time_in(self, events, event_dt: datetime):
+        key = self._event_key(event_dt)
+        for event in events or []:
             if event.event_time.strftime("%Y-%m-%d %H:%M") == key:
                 return event
         return None
