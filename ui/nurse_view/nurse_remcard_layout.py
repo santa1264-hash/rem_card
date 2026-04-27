@@ -257,8 +257,6 @@ class NurseRemCardLayoutManager(QWidget):
         self.sector_1a_stack = QStackedWidget()
         self.sector_1a_stack.addWidget(self.sector_1a)
         self.sector_w1a = SectorW1a()
-        self.sector_w1a.set_stats_button_visible(True) # Включаем кнопку только для медсестры
-        self.sector_w1a.open_statistics_requested.connect(self.open_nurse_statistics)
         self.sector_1a_stack.addWidget(self.sector_w1a)
         
         self.l_layout.addWidget(self.sector_1a_stack, 1)
