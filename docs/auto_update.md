@@ -6,10 +6,10 @@
 \\fs.acrb-amursk.ru\common\РАО\Пациенты\remcard\Prog
 ```
 
-Пакет обновления кладется в соседнюю папку `UPD`:
+Пакет обновления кладется в папку `UPD` внутри папки базы:
 
 ```text
-\\fs.acrb-amursk.ru\common\РАО\Пациенты\remcard\UPD
+\\fs.acrb-amursk.ru\common\РАО\Пациенты\remcard\Baza_rao3_jurnal\UPD
 ```
 
 Внутри `UPD` должны лежать сами файлы сборки, без вложенной папки `Prog`:
