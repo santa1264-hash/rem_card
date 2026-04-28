@@ -17,6 +17,13 @@ def _data_dir(relative_path):
     )
 
 
+def _data_file(relative_path, target_dir="rem_card"):
+    return (
+        os.path.join(APP_ROOT, relative_path),
+        target_dir,
+    )
+
+
 def _dictionary_json_datas():
     source_dir = os.path.join(APP_ROOT, "data", "dictionaries")
     if not os.path.isdir(source_dir):
@@ -38,6 +45,11 @@ a = Analysis(
     pathex=[PROJECT_ROOT, APP_ROOT],
     binaries=[],
 	datas=[
+		# версия приложения и журнал изменений
+		_data_file('VERSION'),
+		_data_file('CHANGELOG.md'),
+		_data_file(os.path.join('app', 'release_info.json'), os.path.join('rem_card', 'app')),
+
 		# иконки
 		_data_dir('icon'),
 

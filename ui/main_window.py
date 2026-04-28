@@ -17,6 +17,7 @@ import time
 from rem_card.app.logger import logger
 from rem_card.app.paths import get_role_lock_path
 from rem_card.app.role_session_lock import RoleSessionLock
+from rem_card.app.version import APP_DISPLAY_TITLE
 
 if TYPE_CHECKING:
     from .doctor_view.doctor_main_widget import DoctorMainWidget
@@ -143,7 +144,7 @@ class MainWindow(QMainWindow):
     def setup_base_ui(self):
         self.settings = QSettings("MyHospital", "RemCard")
         self.settings.sync()
-        self.setWindowTitle("РЕМКАРТА v2.0")
+        self.setWindowTitle(APP_DISPLAY_TITLE)
         
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowMinMaxButtonsHint)
         self.setAttribute(Qt.WA_TranslucentBackground)

@@ -6,9 +6,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from rem_card.app.runtime_paths import get_local_logs_dir
-
-
-APP_VERSION = os.environ.get("REMCARD_APP_VERSION", "2026.04.27.1")
+from rem_card.app.version import APP_VERSION
 
 
 def _now_iso() -> str:

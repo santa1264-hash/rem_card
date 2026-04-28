@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
@@ -9,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
-from rem_card.app.jsonl_audit_log import APP_VERSION, write_audit_event
+from rem_card.app.jsonl_audit_log import write_audit_event
 from rem_card.app.runtime_paths import (
     BAZA_DIR_NAME,
     DataPathConfigurationError,
@@ -18,6 +19,7 @@ from rem_card.app.runtime_paths import (
     is_baza_dir_name,
     resolve_baza_dir,
 )
+from rem_card.app.version import APP_VERSION
 from rem_card.app.sqlite_shared import (
     NETWORK_SAFE_DB_PROFILE,
     FileWriteLock,
@@ -99,11 +101,46 @@ def _same_path(left: str, right: str) -> bool:
 
 def _version_tuple(value: str) -> tuple[int, ...]:
     parts: list[int] = []
-    for part in str(value or "").replace("-", ".").split("."):
+    public_version = str(value or "").split("+", 1)[0].split("-", 1)[0]
+    for part in public_version.split("."):
         digits = "".join(ch for ch in part if ch.isdigit())
         if digits:
             parts.append(int(digits))
     return tuple(parts or [0])
+
+
+def _is_semver(value: str) -> bool:
+    return bool(re.match(r"^\d+\.\d+\.\d+(?:[+-][0-9A-Za-z.-]+)?$", str(value or "").strip()))
+
+
+def _is_legacy_date_version(value: str) -> bool:
+    return bool(re.match(r"^20\d{2}\.\d{1,2}\.\d{1,2}(?:\.\d+)?$", str(value or "").strip()))
+
+
+def _compare_client_versions(current: str, minimum: str) -> int:
+    current_text = str(current or "").strip()
+    minimum_text = str(minimum or "").strip()
+    current_is_legacy = _is_legacy_date_version(current_text)
+    minimum_is_legacy = _is_legacy_date_version(minimum_text)
+    current_is_semver = _is_semver(current_text) and not current_is_legacy
+    minimum_is_semver = _is_semver(minimum_text) and not minimum_is_legacy
+
+    if current_is_semver and minimum_is_legacy:
+        return 1
+    if current_is_legacy and minimum_is_semver:
+        return -1
+
+    current_tuple = _version_tuple(current_text)
+    minimum_tuple = _version_tuple(minimum_text)
+    size = max(len(current_tuple), len(minimum_tuple))
+    current_tuple = current_tuple + (0,) * (size - len(current_tuple))
+    minimum_tuple = minimum_tuple + (0,) * (size - len(minimum_tuple))
+
+    if current_tuple < minimum_tuple:
+        return -1
+    if current_tuple > minimum_tuple:
+        return 1
+    return 0
 
 
 def _is_confirmed_corruption(reason: str) -> bool:
@@ -222,7 +259,7 @@ def _load_or_create_client_policy(baza_dir: str, role: Optional[str]) -> dict[st
             json.dump(policy, fh, ensure_ascii=False, indent=2)
 
     min_version = str(policy.get("min_client_version") or REQUIRED_CLIENT_POLICY_VERSION)
-    if _version_tuple(APP_VERSION) < _version_tuple(min_version):
+    if _compare_client_versions(APP_VERSION, min_version) < 0:
         raise StartupPolicyError("Версия программы устарела. Работа с базой заблокирована. Обновите программу.")
 
     if str(policy.get("required_db_profile") or "").strip() != NETWORK_SAFE_DB_PROFILE:

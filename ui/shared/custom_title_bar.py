@@ -2,6 +2,7 @@ import os
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QApplication
 from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtGui import QIcon, QPixmap
+from rem_card.app.version import APP_DISPLAY_TITLE
 
 class CustomTitleBar(QFrame):
     """
@@ -34,7 +35,7 @@ class CustomTitleBar(QFrame):
             self.icon_label.setPixmap(QPixmap(icon_path))
         
         # Заголовок
-        self.title_label = QLabel("РЕМКАРТА v2.0")
+        self.title_label = QLabel(APP_DISPLAY_TITLE)
         self.title_label.setObjectName("MainTitleText")
         self.title_label.setStyleSheet("margin-left: 8px; font-weight: bold;")
         

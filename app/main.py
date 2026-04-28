@@ -14,6 +14,7 @@ from rem_card.app.runtime_paths import (
     is_compiled,
     write_configured_baza_dir,
 )
+from rem_card.app.version import APP_DISPLAY_TITLE
 
 
 def _show_native_warning(title: str, message: str):
@@ -211,7 +212,7 @@ def main(forced_role: Optional[str] = None, path_setup: bool = False):
 
 
 def _main_impl(forced_role: Optional[str] = None, path_setup: bool = False):
-    parser = argparse.ArgumentParser(description="РЕМКАРТА v2.0")
+    parser = argparse.ArgumentParser(description=APP_DISPLAY_TITLE)
     parser.add_argument("--role", choices=["doctor", "nurse"], help="Начальная роль пользователя")
     parser.add_argument("--path-setup", action="store_true", help="Настроить путь к Baza_rao3_jurnal")
     args, _unknown = parser.parse_known_args()
