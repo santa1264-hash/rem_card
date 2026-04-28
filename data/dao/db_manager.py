@@ -155,6 +155,7 @@ class DatabaseManager:
         self._last_changelog_live_trim_ts = 0.0
         self._changelog_live_trim_grace_until = time.time() + CHANGELOG_LIVE_TRIM_STARTUP_GRACE_SEC
         self._last_local_cache_cleanup_ts = 0.0
+        self._thread_state = threading.local()
 
         self._maybe_rotate_db_lifecycle()
 
@@ -221,7 +222,8 @@ class DatabaseManager:
 
     def _reconnect(self):
         if self._remcard_conn:
-            self._remcard_conn.close()
+            with self.write_controller.connection_guard(self._remcard_conn):
+                self._remcard_conn.close()
         self._init_connections()
         if self._local_replica:
             self._local_replica.trigger_fast_sync()
@@ -765,28 +767,80 @@ class DatabaseManager:
             return False
         return time.time() >= self._prefer_central_reads_until
 
-    def _fetch_all_central(self, query, params=()):
-        # Важно: не удерживаем отдельный read-lock перед connection_guard.
-        # Иначе возможен lock-order inversion:
-        #   reader(thread A): read_lock -> waits connection_guard
-        #   writer(thread B): connection_guard -> waits read_lock
-        # что приводит к взаимной блокировке.
+    def _current_thread_remcard_tx_depth(self) -> int:
         try:
-            with self.write_controller.connection_guard(self._remcard_conn):
-                cursor = self._remcard_conn.cursor()
+            return int(getattr(self._thread_state, "remcard_tx_depth", 0) or 0)
+        except Exception:
+            return 0
+
+    def _in_current_thread_remcard_transaction(self) -> bool:
+        return self._current_thread_remcard_tx_depth() > 0
+
+    @contextmanager
+    def _mark_current_thread_remcard_transaction(self):
+        depth = self._current_thread_remcard_tx_depth()
+        self._thread_state.remcard_tx_depth = depth + 1
+        try:
+            yield
+        finally:
+            if depth <= 0:
+                try:
+                    delattr(self._thread_state, "remcard_tx_depth")
+                except AttributeError:
+                    pass
+            else:
+                self._thread_state.remcard_tx_depth = depth
+
+    def _open_readonly_central_connection(self) -> sqlite3.Connection:
+        uri = f"file:{self.db_path}?mode=ro"
+        conn = sqlite3.connect(
+            uri,
+            uri=True,
+            check_same_thread=False,
+            isolation_level=None,
+            timeout=5.0,
+        )
+        configure_connection(conn, readonly=True, profile="network")
+        return conn
+
+    def _fetch_all_central(self, query, params=(), *, use_write_connection: bool = False):
+        # Чтения внутри текущей транзакции должны видеть незакоммиченные строки.
+        # Обычные фоновые чтения открывают отдельный read-only connection, чтобы
+        # QThread-снимки не делили один sqlite3.Connection с очередью записи.
+        try:
+            if use_write_connection or self._in_current_thread_remcard_transaction():
+                with self.write_controller.connection_guard(self._remcard_conn):
+                    cursor = self._remcard_conn.cursor()
+                    cursor.execute(query, params)
+                    return cursor.fetchall()
+
+            conn = self._open_readonly_central_connection()
+            try:
+                cursor = conn.cursor()
                 cursor.execute(query, params)
                 return cursor.fetchall()
+            finally:
+                conn.close()
         except Exception as exc:
             if is_database_unavailable_error(exc):
                 raise notify_database_unavailable(exc, context="remcard_read_all", logger=logger) from exc
             raise
 
-    def _fetch_one_central(self, query, params=()):
+    def _fetch_one_central(self, query, params=(), *, use_write_connection: bool = False):
         try:
-            with self.write_controller.connection_guard(self._remcard_conn):
-                cursor = self._remcard_conn.cursor()
+            if use_write_connection or self._in_current_thread_remcard_transaction():
+                with self.write_controller.connection_guard(self._remcard_conn):
+                    cursor = self._remcard_conn.cursor()
+                    cursor.execute(query, params)
+                    return cursor.fetchone()
+
+            conn = self._open_readonly_central_connection()
+            try:
+                cursor = conn.cursor()
                 cursor.execute(query, params)
                 return cursor.fetchone()
+            finally:
+                conn.close()
         except Exception as exc:
             if is_database_unavailable_error(exc):
                 raise notify_database_unavailable(exc, context="remcard_read_one", logger=logger) from exc
@@ -887,14 +941,15 @@ class DatabaseManager:
         backup_name = f"{prefix}_{db_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
         backup_path = os.path.join(BACKUPS_VALID_DIR, backup_name)
         try:
-            backup_connection(
-                self._remcard_conn,
-                backup_path,
-                invalid_dir=INVALID_BACKUPS_DIR,
-                logger=logger,
-                lock_path=DB_LOCK_PATH,
-                source=f"{prefix}_backup",
-            )
+            with self.write_controller.connection_guard(self._remcard_conn):
+                backup_connection(
+                    self._remcard_conn,
+                    backup_path,
+                    invalid_dir=INVALID_BACKUPS_DIR,
+                    logger=logger,
+                    lock_path=DB_LOCK_PATH,
+                    source=f"{prefix}_backup",
+                )
             self._rotate_backups()
             self._last_backup_ts = time.time()
             logger.info("%s backup created (%s): %s", prefix.capitalize(), source, backup_path)
@@ -1006,12 +1061,13 @@ class DatabaseManager:
     @contextmanager
     def remcard_transaction(self, source: str = "remcard_tx"):
         statement_sink: list[tuple[str, tuple]] = []
-        outer_transaction = bool(self._remcard_conn) and not self._remcard_conn.in_transaction
+        outer_transaction = not self._in_current_thread_remcard_transaction()
         try:
             with self.write_controller.transaction(self._remcard_conn, source=source) as cursor:
-                wrapped_cursor = RecordingCursor(cursor, statement_sink) if outer_transaction else cursor
-                yield wrapped_cursor
-            if self._remcard_conn and not self._remcard_conn.in_transaction:
+                with self._mark_current_thread_remcard_transaction():
+                    wrapped_cursor = RecordingCursor(cursor, statement_sink) if outer_transaction else cursor
+                    yield wrapped_cursor
+            if self._remcard_conn and outer_transaction:
                 self._maybe_create_periodic_backup(source=source)
                 self._after_write_committed()
         except (sqlite3.OperationalError, sqlite3.ProgrammingError, sqlite3.DatabaseError, OSError) as exc:
@@ -1034,7 +1090,7 @@ class DatabaseManager:
         logger.debug("SQL RemCard Exec: %s | Params: %s", query, params)
         try:
             cursor = self.write_controller.execute(self._remcard_conn, query, params, source=source)
-            if self._remcard_conn and not self._remcard_conn.in_transaction:
+            if self._remcard_conn and not self._in_current_thread_remcard_transaction():
                 self._maybe_create_periodic_backup(source=source)
                 self._after_write_committed()
             return cursor
@@ -1047,7 +1103,7 @@ class DatabaseManager:
                 try:
                     self._reconnect()
                     cursor = self.write_controller.execute(self._remcard_conn, query, params, source=f"{source}:reconnect")
-                    if self._remcard_conn and not self._remcard_conn.in_transaction:
+                    if self._remcard_conn and not self._in_current_thread_remcard_transaction():
                         self._maybe_create_periodic_backup(source=f"{source}:reconnect")
                         self._after_write_committed()
                     return cursor
@@ -1062,8 +1118,8 @@ class DatabaseManager:
 
     def fetch_all_remcard(self, query, params=()):
         logger.debug("SQL RemCard FetchAll: %s | Params: %s", query, params)
-        if self._remcard_conn and self._remcard_conn.in_transaction:
-            return self._fetch_all_central(query, params)
+        if self._in_current_thread_remcard_transaction():
+            return self._fetch_all_central(query, params, use_write_connection=True)
         if self._should_read_from_local():
             try:
                 return self._local_replica.fetch_all(query, params)
@@ -1073,8 +1129,8 @@ class DatabaseManager:
 
     def fetch_one_remcard(self, query, params=()):
         logger.debug("SQL RemCard FetchOne: %s | Params: %s", query, params)
-        if self._remcard_conn and self._remcard_conn.in_transaction:
-            return self._fetch_one_central(query, params)
+        if self._in_current_thread_remcard_transaction():
+            return self._fetch_one_central(query, params, use_write_connection=True)
         if self._should_read_from_local():
             try:
                 return self._local_replica.fetch_one(query, params)
@@ -1245,7 +1301,8 @@ class DatabaseManager:
         self._stop_local_replica_sync()
 
         if self._remcard_conn:
-            self._create_shutdown_backup()
-            self._remcard_conn.close()
+            with self.write_controller.connection_guard(self._remcard_conn):
+                self._create_shutdown_backup()
+                self._remcard_conn.close()
         self._remcard_conn = None
         self._journal_conn = None

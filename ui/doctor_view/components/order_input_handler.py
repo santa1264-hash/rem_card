@@ -114,11 +114,13 @@ class OrderInputHandler:
         if "ruki" in text_lower or "ruchnoivvod" in text_lower or "[ru]" in text_lower:
             display_latin = text.replace("[RU]", "").replace("[ru]", "").strip()
             resolved_drug_key = None
+            resolved_drug_data = {}
 
             if explicit_key_match:
                 explicit_key = explicit_key_match.group(1).strip().lower()
                 if explicit_key:
                     resolved_drug_key = explicit_key
+                    resolved_drug_data = engine.drugs.get(explicit_key, {}) or {}
                 display_latin = display_latin.replace(explicit_key_match.group(0), "").strip()
             
             comment_parts = []
@@ -152,6 +154,11 @@ class OrderInputHandler:
                 except:
                     pass
                 display_latin = display_latin.replace(dur_match.group(1), "").strip()
+            elif resolved_drug_data:
+                try:
+                    duration_min = int(resolved_drug_data.get("duration_min", 0) or 0)
+                except Exception:
+                    duration_min = 0
                 
             if "+" in display_latin:
                 parts = display_latin.split("+", 1)
@@ -179,7 +186,14 @@ class OrderInputHandler:
                     if found_key in ("blood", "plasma"):
                         resolved_drug_key = found_key
                 
-            otype = OrderType.INFUSION_CONTINUOUS if duration_min != 0 else OrderType.MEDICATION
+            freq_match = re.search(r"(\d+)р", text)
+            freq = int(freq_match.group(1)) if freq_match else 1
+
+            admin_type = str(resolved_drug_data.get("admin_type", "") or "").lower()
+            route_hint = " ".join(comment_parts).lower()
+            otype = OrderType.MEDICATION
+            if duration_min != 0 or admin_type in ("infusion", "continuous") or "инф" in route_hint:
+                otype = OrderType.INFUSION_CONTINUOUS
                 
             return OrderDTO(
                 admission_id=admission_id,
@@ -188,6 +202,8 @@ class OrderInputHandler:
                 type=otype,
                 dose_value=dose_val,
                 dose_unit=dose_unit,
+                frequency=freq,
+                specific_times=ScheduleEngine.generate_times(freq) if resolved_drug_key else [],
                 duration_min=duration_min,
                 is_committed=0,
                 created_at=datetime.now(),

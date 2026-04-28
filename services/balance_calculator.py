@@ -340,17 +340,27 @@ class BalanceCalculator:
         if cls._admin_mark(admin) != "nurse_executed":
             return
 
-        fact_time = getattr(admin, "actual_time", None) or admin.planned_time
-        if fact_time > period_end or fact_time >= daily_limit:
+        planned_time = admin.planned_time
+        if planned_time > period_end or planned_time >= daily_limit:
             return
 
         dur = float(getattr(order, "duration_min", 0) or 0)
         if dur <= 0:
-            cls._add_point_to_hourly(hourly, start_time, fact_time, inf_v, prep_v, cat)
+            cls._add_point_to_hourly(hourly, start_time, planned_time, inf_v, prep_v, cat)
             return
 
-        interval_end = min(fact_time + timedelta(minutes=dur), period_end, daily_limit)
-        cls._add_interval_to_hourly(hourly, start_time, fact_time, interval_end, inf_v, prep_v, cat)
+        interval_end = min(planned_time + timedelta(minutes=dur), daily_limit)
+        visible_end = min(interval_end, period_end)
+        cls._add_interval_to_hourly(
+            hourly,
+            start_time,
+            planned_time,
+            interval_end,
+            inf_v,
+            prep_v,
+            cat,
+            visible_end=visible_end,
+        )
 
     @classmethod
     def _add_chain_actual_to_hourly(cls, hourly, start_time, period_end, daily_limit, order, admins, inf_v, prep_v, cat):
@@ -363,48 +373,31 @@ class BalanceCalculator:
             )
             return
 
-        executed_times = [
-            (getattr(admin, "actual_time", None) or admin.planned_time)
-            for admin in admins
-            if cls._admin_mark(admin) == "nurse_executed"
-        ]
-        if not any(fact_time <= period_end for fact_time in executed_times):
+        executed_times = [admin.planned_time for admin in admins if cls._admin_mark(admin) == "nurse_executed"]
+        if not any(planned_time <= period_end for planned_time in executed_times):
             return
 
         start_of_chain = admins[0].planned_time
         dur_val = float(getattr(order, "duration_min", 0) or 0)
         if dur_val > 0:
-            total_dur_min = dur_val
             chain_end = min(start_of_chain + timedelta(minutes=dur_val), daily_limit)
         else:
-            total_dur_min = (daily_limit - start_of_chain).total_seconds() / 60.0
             chain_end = daily_limit
 
-        if total_dur_min <= 0:
+        if chain_end <= start_of_chain:
             return
 
-        speed_inf = inf_v / total_dur_min
-        speed_prep = prep_v / total_dur_min
-
-        for admin in admins:
-            if cls._admin_mark(admin) == "nurse_not_executed":
-                continue
-            q_start = admin.planned_time
-            if q_start > period_end or q_start >= daily_limit or q_start >= chain_end:
-                continue
-            q_end = min(q_start + timedelta(hours=1), period_end, daily_limit, chain_end)
-            active_min = max(0.0, (q_end - q_start).total_seconds() / 60.0)
-            if active_min <= 0:
-                continue
-            cls._add_interval_to_hourly(
-                hourly,
-                start_time,
-                q_start,
-                q_end,
-                speed_inf * active_min,
-                speed_prep * active_min,
-                cat,
-            )
+        visible_end = min(period_end, chain_end)
+        cls._add_interval_to_hourly(
+            hourly,
+            start_time,
+            start_of_chain,
+            chain_end,
+            inf_v,
+            prep_v,
+            cat,
+            visible_end=visible_end,
+        )
 
     @classmethod
     def _add_segmented_chain_actual_to_hourly(cls, hourly, start_time, period_end, daily_limit, order, admins, inf_v, prep_v, cat):
@@ -424,7 +417,7 @@ class BalanceCalculator:
         has_executed_fact = any(
             cls._admin_mark(admin) == "nurse_executed"
             and getattr(admin, "cell_role", "") in ("start", "single", "body")
-            and (getattr(admin, "actual_time", None) or admin.planned_time) <= effective_period_end
+            and admin.planned_time <= effective_period_end
             for admin in admins
         )
         has_stop_fact = bool(stop_time and start_of_chain < stop_time <= effective_period_end)
@@ -483,14 +476,25 @@ class BalanceCalculator:
             cls._add_vol_to_hourly_bucket(hourly[idx], inf_v, prep_v, cat)
 
     @classmethod
-    def _add_interval_to_hourly(cls, hourly, start_time, interval_start, interval_end, inf_v, prep_v, cat):
+    def _add_interval_to_hourly(
+        cls,
+        hourly,
+        start_time,
+        interval_start,
+        interval_end,
+        inf_v,
+        prep_v,
+        cat,
+        *,
+        visible_end=None,
+    ):
         if interval_end <= interval_start:
             return
 
         report_start = start_time
         report_end = start_time + timedelta(hours=24)
         visible_start = max(interval_start, report_start)
-        visible_end = min(interval_end, report_end)
+        visible_end = min(visible_end or interval_end, interval_end, report_end)
         if visible_end <= visible_start:
             return
 

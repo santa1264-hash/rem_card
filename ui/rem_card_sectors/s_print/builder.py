@@ -224,15 +224,6 @@ class ReportBuilder:
                 white-space: nowrap;
             }
 
-            .balance-summary {
-                text-align: left;
-                font-size: 11pt;
-                font-weight: bold;
-                margin-top: 5px;
-                margin-bottom: 0;
-                margin-left: 1%;
-            }
-            
             .day-container {
                 width: __TABLE_WIDTH__;
             }
@@ -309,7 +300,7 @@ class ReportBuilder:
 
         return f"""<html><head>{ReportBuilder._get_css(table_width_pt)}</head><body>
         <div class="report-page">
-            {render_header(data, start_str, end_str)}
+            {render_header(data, start_str, end_str, config.get("balance", True))}
             {html_body}
         </div>
         </body></html>
@@ -332,7 +323,7 @@ class ReportBuilder:
             day_content = f"""
             <div class="day-container" {page_style}>
                 <div class="report-page">
-                    {render_header(data, start_str, end_str)}
+                    {render_header(data, start_str, end_str, config.get("balance", True))}
                     {html_body}
                 </div>
             </div>

@@ -133,6 +133,84 @@ def _check_read_your_writes_inside_transaction(temp_root: str) -> tuple[bool, st
         manager.close()
 
 
+def _check_central_reads_split_from_write_connection(temp_root: str) -> tuple[bool, str]:
+    from rem_card.data.dao.db_manager import DatabaseManager
+
+    db_path = os.path.join(temp_root, "central_read_split.db")
+    manager = DatabaseManager(db_path, db_path)
+    try:
+        # Force central path; this check is specifically about the central read connection.
+        manager._local_replica = None
+        manager.execute_remcard(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('read_split_probe', 1)",
+            source="regression_read_split_init",
+        )
+
+        readonly_open_count = 0
+        original_open = manager._open_readonly_central_connection
+
+        def counted_open():
+            nonlocal readonly_open_count
+            readonly_open_count += 1
+            return original_open()
+
+        manager._open_readonly_central_connection = counted_open  # type: ignore[method-assign]
+
+        outside_row = manager.fetch_one_remcard("SELECT value FROM meta WHERE key='read_split_probe'")
+        if not outside_row or int(outside_row[0]) != 1:
+            return False, "outside transaction read returned wrong value"
+        if readonly_open_count != 1:
+            return False, f"outside transaction did not use readonly central connection: {readonly_open_count}"
+
+        with manager.remcard_transaction(source="regression_read_split_tx"):
+            manager.execute_remcard(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('read_split_probe', 2)",
+                source="regression_read_split_update_inside_tx",
+            )
+            inside_row = manager.fetch_one_remcard("SELECT value FROM meta WHERE key='read_split_probe'")
+            if not inside_row or int(inside_row[0]) != 2:
+                return False, "inside transaction did not see uncommitted write"
+
+        if readonly_open_count != 1:
+            return False, "inside transaction unexpectedly opened readonly central connection"
+        return True, "ok"
+    finally:
+        manager.close()
+
+
+def _check_blood_plasma_key_ru_prescription_parse(temp_root: str) -> tuple[bool, str]:
+    from rem_card.data.dto.remcard_dto import OrderType
+    from rem_card.ui.doctor_view.components.order_input_handler import OrderInputHandler
+
+    cases = [
+        (
+            "blood",
+            "Эр. масса [DOSE:350] [UNIT:мл] [ROUTE:инфузия] [KEY:blood] [RU]",
+            350,
+            60,
+        ),
+        (
+            "plasma",
+            "СЗП [DOSE:450] [UNIT:мл] [ROUTE:инфузия] [KEY:plasma] [RU]",
+            450,
+            0,
+        ),
+    ]
+    for expected_key, text, expected_dose, expected_duration in cases:
+        dto = OrderInputHandler.parse_input_to_dto(text, admission_id=3)
+        if dto.drug_key != expected_key:
+            return False, f"{expected_key}: wrong drug_key: {dto.drug_key}"
+        if dto.dose_value != expected_dose:
+            return False, f"{expected_key}: wrong dose_value: {dto.dose_value}"
+        if dto.duration_min != expected_duration:
+            return False, f"{expected_key}: duration lost: {dto.duration_min}"
+        if dto.type != OrderType.INFUSION_CONTINUOUS:
+            return False, f"{expected_key}: infusion type lost: {dto.type}"
+        if not dto.specific_times:
+            return False, f"{expected_key}: prescription did not get generated schedule times"
+    return True, "ok"
+
+
 def _create_sqlite_file(path: str):
     conn = sqlite3.connect(path)
     try:
@@ -303,6 +381,243 @@ def _check_balance_admission_hour_visibility(temp_root: str) -> tuple[bool, str]
         return True, "ok"
     finally:
         manager.close()
+
+
+def _check_print_hourly_input_planned_time(temp_root: str) -> tuple[bool, str]:
+    from datetime import datetime, timedelta
+
+    from rem_card.data.dto.remcard_dto import AdministrationDTO, OrderDTO, OrderStatus, OrderType
+    from rem_card.services.balance_calculator import BalanceCalculator
+    from rem_card.services.report_balance import build_print_balance_final
+
+    start = datetime(2026, 4, 24, 8, 0, 0)
+    end = start + timedelta(hours=24)
+
+    def executed_admin(order_id: int, planned_hour: int, actual_hour: int, actual_minute: int = 0, *, role: str = "single", chain_id: str | None = None):
+        return AdministrationDTO(
+            id=order_id * 100 + planned_hour,
+            order_id=order_id,
+            big_chain_id=chain_id,
+            cell_role=role,
+            planned_time=start + timedelta(hours=planned_hour),
+            actual_time=start + timedelta(hours=actual_hour, minutes=actual_minute),
+            status="planned",
+            is_committed=1,
+            comment="nurse_executed",
+        )
+
+    mixed_input = OrderDTO(
+        id=1,
+        admission_id=1,
+        drug_key="ruchnoivvod",
+        latin="Manual infusion",
+        type=OrderType.MEDICATION,
+        status=OrderStatus.ACTIVE,
+        dose_value=20,
+        dose_unit="ml",
+        duration_min=0,
+        is_committed=1,
+        comment="S. NaCl - 400 ml",
+        administrations=[executed_admin(1, planned_hour=11, actual_hour=15, actual_minute=0)],
+    )
+    mixed_hourly = BalanceCalculator.calculate_hourly_actual_input([mixed_input], start, end, end)
+    if mixed_hourly[11]["infusion"] != 400.0 or mixed_hourly[11]["preparats"] != 20.0:
+        return False, f"mixed input did not land in planned hour: {mixed_hourly[11]}"
+    if mixed_hourly[15]["infusion"] != 0.0 or mixed_hourly[15]["preparats"] != 0.0:
+        return False, f"mixed input incorrectly used actual mark hour: {mixed_hourly[15]}"
+
+    future_21 = OrderDTO(
+        id=7,
+        admission_id=1,
+        drug_key="furosemide",
+        latin="Furosemidi",
+        type=OrderType.MEDICATION,
+        status=OrderStatus.ACTIVE,
+        dose_value=21,
+        dose_unit="ml",
+        duration_min=0,
+        is_committed=1,
+        comment="",
+        administrations=[executed_admin(7, planned_hour=13, actual_hour=12, actual_minute=0)],
+    )
+    future_22 = OrderDTO(
+        id=8,
+        admission_id=1,
+        drug_key="furosemide",
+        latin="Furosemidi",
+        type=OrderType.MEDICATION,
+        status=OrderStatus.ACTIVE,
+        dose_value=22,
+        dose_unit="ml",
+        duration_min=0,
+        is_committed=1,
+        comment="",
+        administrations=[executed_admin(8, planned_hour=14, actual_hour=12, actual_minute=0)],
+    )
+    unmarked_future_21 = OrderDTO(
+        id=9,
+        admission_id=1,
+        drug_key="furosemide",
+        latin="Furosemidi",
+        type=OrderType.MEDICATION,
+        status=OrderStatus.ACTIVE,
+        dose_value=31,
+        dose_unit="ml",
+        duration_min=0,
+        is_committed=1,
+        comment="",
+        administrations=[
+            AdministrationDTO(
+                id=913,
+                order_id=9,
+                cell_role="single",
+                planned_time=start + timedelta(hours=13),
+                status="planned",
+                is_committed=1,
+                comment="",
+            )
+        ],
+    )
+    print_balance = build_print_balance_final(
+        orders=[future_21, future_22, unmarked_future_21],
+        fluids=[],
+        remcard_service=object(),
+        config={"balance": True},
+        admission_id=1,
+        start_dt=start,
+        current_time=start + timedelta(hours=12),
+        end_dt=end,
+    )
+    if print_balance["in_hourly"][13]["preparats"] != 21.0:
+        return False, "print input did not include exactly the one-hour future executed appointment"
+    if print_balance["in_hourly"][14]["preparats"] != 0.0:
+        return False, "print input included appointment more than one hour in the future"
+
+    timed_infusion = OrderDTO(
+        id=5,
+        admission_id=1,
+        drug_key="ceftriaxone",
+        latin="Ceftriaxoni",
+        type=OrderType.MEDICATION,
+        status=OrderStatus.ACTIVE,
+        dose_value=1,
+        dose_unit="g",
+        duration_min=120,
+        is_committed=1,
+        comment="S. NaCl - 240 ml",
+        administrations=[executed_admin(5, planned_hour=1, actual_hour=2, actual_minute=30)],
+    )
+    timed_hourly = BalanceCalculator.calculate_hourly_actual_input([timed_infusion], start, start + timedelta(hours=4), end)
+    if (timed_hourly[1]["infusion"], timed_hourly[2]["infusion"], timed_hourly[3]["infusion"]) != (120.0, 120.0, 0.0):
+        return False, f"timed infusion used actual mark time instead of planned time: {[timed_hourly[i]['infusion'] for i in (1, 2, 3)]}"
+
+    preparat = OrderDTO(
+        id=2,
+        admission_id=1,
+        drug_key="furosemide",
+        latin="Furosemidi",
+        type=OrderType.MEDICATION,
+        status=OrderStatus.ACTIVE,
+        dose_value=20,
+        dose_unit="ml",
+        duration_min=0,
+        is_committed=1,
+        comment="",
+        administrations=[executed_admin(2, planned_hour=2, actual_hour=3, actual_minute=5)],
+    )
+    preparat_hourly = BalanceCalculator.calculate_hourly_actual_input([preparat], start, start + timedelta(hours=5), end)
+    if preparat_hourly[2]["preparats"] != 20.0 or preparat_hourly[3]["preparats"] != 0.0:
+        return False, f"bolus preparat used actual hour instead of planned hour: {[preparat_hourly[i]['preparats'] for i in (2, 3)]}"
+
+    not_done = OrderDTO(
+        id=6,
+        admission_id=1,
+        drug_key="furosemide",
+        latin="Furosemidi",
+        type=OrderType.MEDICATION,
+        status=OrderStatus.ACTIVE,
+        dose_value=30,
+        dose_unit="ml",
+        duration_min=0,
+        is_committed=1,
+        comment="",
+        administrations=[
+            AdministrationDTO(
+                id=606,
+                order_id=6,
+                cell_role="single",
+                planned_time=start + timedelta(hours=6),
+                actual_time=start + timedelta(hours=7),
+                status="planned",
+                is_committed=1,
+                comment="nurse_not_executed",
+            )
+        ],
+    )
+    not_done_hourly = BalanceCalculator.calculate_hourly_actual_input([not_done], start, end, end)
+    if not_done_hourly[6]["preparats"] != 0.0:
+        return False, "not executed preparat was included in print hourly input"
+
+    late_documented = OrderDTO(
+        id=4,
+        admission_id=1,
+        drug_key="furosemide",
+        latin="Furosemidi",
+        type=OrderType.MEDICATION,
+        status=OrderStatus.ACTIVE,
+        dose_value=10,
+        dose_unit="ml",
+        duration_min=0,
+        is_committed=1,
+        comment="",
+        administrations=[
+            AdministrationDTO(
+                id=404,
+                order_id=4,
+                cell_role="single",
+                planned_time=start + timedelta(hours=4),
+                actual_time=end + timedelta(hours=1),
+                status="planned",
+                is_committed=1,
+                comment="nurse_executed",
+            )
+        ],
+    )
+    late_hourly = BalanceCalculator.calculate_hourly_actual_input([late_documented], start, end, end)
+    if late_hourly[4]["preparats"] != 10.0:
+        return False, "past card late-documented preparat was not kept in its planned hour"
+
+    chain = OrderDTO(
+        id=3,
+        admission_id=1,
+        drug_key="ceftriaxone",
+        latin="Ceftriaxoni",
+        type=OrderType.MEDICATION,
+        status=OrderStatus.ACTIVE,
+        dose_value=1,
+        dose_unit="g",
+        duration_min=120,
+        is_committed=1,
+        comment="S. NaCl - 240 ml",
+        administrations=[
+            executed_admin(3, planned_hour=1, actual_hour=1, actual_minute=30, role="start", chain_id="chain-1"),
+            AdministrationDTO(
+                id=302,
+                order_id=3,
+                big_chain_id="chain-1",
+                cell_role="end",
+                planned_time=start + timedelta(hours=2),
+                status="planned",
+                is_committed=1,
+                comment="",
+            ),
+        ],
+    )
+    chain_hourly = BalanceCalculator.calculate_hourly_actual_input([chain], start, start + timedelta(hours=4), end)
+    if (chain_hourly[1]["infusion"], chain_hourly[2]["infusion"], chain_hourly[3]["infusion"]) != (120.0, 120.0, 0.0):
+        return False, f"chain infusion used actual start instead of planned start: {[chain_hourly[i]['infusion'] for i in (1, 2, 3)]}"
+
+    return True, "ok"
 
 
 def _check_vitals_boundary_minutes(temp_root: str) -> tuple[bool, str]:
@@ -674,10 +989,13 @@ def main():
         ("lock_read_unavailable_not_stale", _check_lock_read_unavailable_not_stale),
         ("transaction_isolation", _check_transaction_isolation),
         ("read_your_writes_inside_tx", _check_read_your_writes_inside_transaction),
+        ("central_reads_split_from_write_connection", _check_central_reads_split_from_write_connection),
+        ("blood_plasma_key_ru_prescription_parse", _check_blood_plasma_key_ru_prescription_parse),
         ("local_replica_tmp_cleanup", _check_local_replica_tmp_cleanup),
         ("backup_cleanup_gating", _check_backup_cleanup_gating),
         ("backup_count_limit_enforcement", _check_backup_count_limit_enforcement),
         ("balance_admission_hour_visibility", _check_balance_admission_hour_visibility),
+        ("print_hourly_input_planned_time", _check_print_hourly_input_planned_time),
         ("vitals_boundary_minutes", _check_vitals_boundary_minutes),
         ("orders_force_refresh_accepts_unchanged_version", _check_orders_force_refresh_accepts_unchanged_version),
         ("doctor_orders_late_model_binding", _check_doctor_orders_late_model_binding),

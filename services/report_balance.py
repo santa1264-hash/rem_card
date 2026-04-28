@@ -55,6 +55,17 @@ def _round_input_hourly(hourly: Dict[int, Dict[str, float]]):
             values[key] = round(float(values.get(key, 0.0) or 0.0), 1)
 
 
+def _sum_input_hourly(hourly: Dict[int, Dict[str, float]]) -> Dict[str, float]:
+    totals = {key: 0.0 for key in INPUT_KEYS}
+    for values in hourly.values():
+        for key in INPUT_KEYS:
+            totals[key] += float(values.get(key, 0.0) or 0.0)
+    for key in INPUT_KEYS:
+        totals[key] = round(totals[key], 1)
+    totals["total"] = round(sum(totals[key] for key in INPUT_KEYS), 1)
+    return totals
+
+
 def build_print_balance_final(
     *,
     orders,
@@ -68,7 +79,8 @@ def build_print_balance_final(
 ) -> dict:
     balance_res = BalanceCalculator.calculate(orders, current_time, end_dt)
     in_hourly = _empty_input_hourly()
-    order_hourly = BalanceCalculator.calculate_hourly_actual_input(orders, start_dt, current_time, end_dt)
+    input_cutoff_time = min(current_time + timedelta(hours=1), end_dt)
+    order_hourly = BalanceCalculator.calculate_hourly_actual_input(orders, start_dt, input_cutoff_time, end_dt)
     _merge_input_hourly(in_hourly, order_hourly)
 
     oral_cur = 0
@@ -89,6 +101,7 @@ def build_print_balance_final(
             logger.warning("Failed to load oral intake events for print balance: %s", exc)
 
     _round_input_hourly(in_hourly)
+    in_cur = _sum_input_hourly(in_hourly)
 
     balance_res["current"]["oral"] = round(oral_cur, 1)
     balance_res["daily"]["oral"] = round(oral_day, 1)
@@ -124,4 +137,5 @@ def build_print_balance_final(
         "out_full": f_detail_full,
         "out_hourly": out_hourly,
         "in_hourly": in_hourly,
+        "in_cur": in_cur,
     }
